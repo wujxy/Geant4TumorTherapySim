@@ -150,7 +150,7 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   analysis->CreateH1("hDepthDose", "Depth-dose profile;y (mm);Energy deposit (MeV)", 200, -200., 200.);
   analysis->CreateH1("hSecondaryParticles", "Secondaries;type;count", 4, 0., 4.);
   analysis->CreateH3("hVoxelDose3D", "Tumor/normal voxel edep;x (mm);y (mm);z (mm)",
-                     60, -80., 80., 60, -80., 20., 80, -20., 100.);
+                     100, -140., 140., 100, -80., 80., 80, -20., 100.);
 }
 
 void TherapyAnalysisManager::FillRunTree(G4int nEvents, G4int nCells)
@@ -209,6 +209,7 @@ void TherapyAnalysisManager::AddEnergyDeposit(G4double edep,
                                               G4int cellID,
                                               G4bool inTumorRegion,
                                               G4bool inNormalRegion,
+                                              G4bool inPhantom,
                                               G4bool inNucleus,
                                               G4bool inBoronRegion,
                                               const G4String& particleName,
@@ -228,7 +229,7 @@ void TherapyAnalysisManager::AddEnergyDeposit(G4double edep,
   const G4double let = stepLength > 0. ? (edep / MeV) / (stepLength / micrometer) : 0.;
   if (inTumorRegion) analysis->FillH1(6, let);
   if (inNormalRegion) analysis->FillH1(7, let);
-  if (inTumorRegion || inNormalRegion) {
+  if (inPhantom) {
     analysis->FillH1(8, position.y() / mm, edep / MeV);
     analysis->FillH3(0, position.x() / mm, position.y() / mm, position.z() / mm, edep / MeV);
   }

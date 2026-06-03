@@ -1,11 +1,11 @@
-/control/verbose 1
-/run/verbose 1
+/control/verbose 0
+/run/verbose 0
 /event/verbose 0
 /tracking/verbose 0
 
 /therapy/mode problem1
 /therapy/boronMode none
-/therapy/outputFile output_problem1_proton.root
+/therapy/outputFile output_problem1_proton_50MeV.root
 /therapy/saveStepTree false
 /therapy/tumorPosition -45 -45 30 mm
 /therapy/normalPosition -45 -15 30 mm
@@ -19,5 +19,5 @@
 
 /run/initialize
 /gun/particle proton
-/gun/energy 45 MeV
-/run/beamOn 1000
+/gun/energy 50 MeV
+/run/beamOn 500

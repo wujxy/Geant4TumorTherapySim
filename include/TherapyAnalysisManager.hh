@@ -64,6 +64,7 @@ public:
                         G4int cellID,
                         G4bool inTumorRegion,
                         G4bool inNormalRegion,
+                        G4bool inPhantom,
                         G4bool inNucleus,
                         G4bool inBoronRegion,
                         const G4String& particleName,

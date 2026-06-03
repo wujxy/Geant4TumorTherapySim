@@ -24,6 +24,7 @@ void DetectorConstruction::DefineMaterials()
 {
   auto nist = G4NistManager::Instance();
   fWater = nist->FindOrBuildMaterial("G4_WATER");
+  fWorldMaterial = nist->FindOrBuildMaterial("G4_AIR");
 
   auto b10 = new G4Isotope("B10", 5, 10, 10.012937 * g / mole);
   auto b10Element = new G4Element("EnrichedB10", "B10", 1);
@@ -45,7 +46,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
   const G4bool checkOverlaps = true;
 
   auto worldSolid = new G4Box("WorldSolid", 1.5 * m, 1.5 * m, 1.5 * m);
-  auto worldLogical = new G4LogicalVolume(worldSolid, fWater, "WorldLV");
+  auto worldLogical = new G4LogicalVolume(worldSolid, fWorldMaterial, "WorldLV");
   auto worldPhysical = new G4PVPlacement(nullptr, G4ThreeVector(), worldLogical, "World", nullptr, false, 0, checkOverlaps);
   worldLogical->SetVisAttributes(G4VisAttributes::GetInvisible());
 

@@ -24,6 +24,7 @@ private:
   void DefineMaterials();
 
   G4Material* fWater = nullptr;
+  G4Material* fWorldMaterial = nullptr;
   G4Material* fBoronWater = nullptr;
   std::vector<CellInfo> fCells;
 };
