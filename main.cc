@@ -8,6 +8,8 @@
 #include "G4UImanager.hh"
 #include "G4VisExecutive.hh"
 
+#include <string>
+
 int main(int argc, char** argv)
 {
   // Construct the singleton before macro parsing so /therapy commands exist.
@@ -26,7 +28,13 @@ int main(int argc, char** argv)
   visManager->Initialize();
 
   auto* uiManager = G4UImanager::GetUIpointer();
-  if (argc > 1) {
+  if (argc > 1 && std::string(argv[1]) == "--interactive") {
+    auto* ui = new G4UIExecutive(argc, argv);
+    const G4String macro = argc > 2 ? argv[2] : "macros/vis.mac";
+    uiManager->ApplyCommand("/control/execute " + macro);
+    ui->SessionStart();
+    delete ui;
+  } else if (argc > 1) {
     const G4String command = "/control/execute ";
     uiManager->ApplyCommand(command + argv[1]);
   } else {

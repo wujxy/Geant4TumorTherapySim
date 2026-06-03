@@ -35,6 +35,14 @@ The visualized geometry contains:
 - blue normal control region;
 - representative tumor and normal cell patches.
 
+To directly view proton tracks entering the body:
+
+```bash
+./build/tumor_therapy --interactive macros/vis_proton.mac
+```
+
+This macro opens an OpenGL viewer, shoots 20 protons from the negative `y` direction, and accumulates their trajectories in the scene. The `--interactive` flag keeps the Geant4 prompt open after the macro finishes, so the viewer does not immediately close.
+
 ## 4. Problem 1: Gamma vs Proton
 
 Run gamma:

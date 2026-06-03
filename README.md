@@ -28,6 +28,14 @@ cmake --build build -j
 
 Each run writes a ROOT file such as `output_problem1_gamma.root`.
 
+Interactive proton-beam visualization:
+
+```bash
+./build/tumor_therapy --interactive macros/vis_proton.mac
+```
+
+The interactive form keeps the Geant4 UI session alive after the macro runs, so the OpenGL window remains available for rotation, zooming, and trajectory inspection.
+
 ## Main Outputs
 
 The ROOT files contain:

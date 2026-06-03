@@ -1,0 +1,44 @@
+# Interactive visualization of a proton beam entering the simplified body.
+# Run with:
+#   ./build/tumor_therapy macros/vis_proton.mac
+
+/control/verbose 1
+/run/verbose 1
+/event/verbose 0
+/tracking/verbose 0
+
+/therapy/mode problem1
+/therapy/boronMode none
+/therapy/outputFile vis_proton.root
+/therapy/saveStepTree false
+/therapy/tumorPosition -45 -45 30 mm
+/therapy/normalPosition 45 -45 30 mm
+/therapy/sourcePosition 0 -600 30 mm
+/therapy/sourceDirection 0 1 0
+/therapy/beamRadius 5 mm
+/therapy/cellPatchSize 200 200 200 um
+/therapy/cellPitch 12 um
+/therapy/cellDiameter 10 um
+
+/run/initialize
+
+/vis/open OGLS 1200x850-0+0
+/vis/drawVolume
+/vis/viewer/set/viewpointThetaPhi 70 25
+/vis/viewer/set/style surface
+/vis/viewer/set/hiddenEdge 1
+/vis/viewer/set/autoRefresh true
+/vis/scene/add/axes 0 0 0 250 mm
+/vis/scene/add/trajectories smooth
+/vis/modeling/trajectories/create/drawByParticleID
+/vis/modeling/trajectories/drawByParticleID-0/default/setDrawStepPts true
+/vis/modeling/trajectories/drawByParticleID-0/default/setStepPtsSize 3
+/vis/scene/add/hits
+/vis/scene/endOfEventAction accumulate 20
+
+/tracking/storeTrajectory 1
+/gun/particle proton
+/gun/energy 120 MeV
+
+/run/beamOn 20
+/vis/viewer/flush

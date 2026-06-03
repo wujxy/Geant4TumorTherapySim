@@ -59,6 +59,7 @@ This is a first working version focused on:
 - tumor and normal scoring regions;
 - representative `10 um` cell patches;
 - gamma, proton, and thermal-neutron source macros;
+- interactive OpenGL proton-beam visualization macro;
 - ROOT output for event-level and cell-level analysis.
 
 Future improvements can add automated parameter scans, more realistic tissue materials, multiple tumor-depth patches, and biological survival models.
