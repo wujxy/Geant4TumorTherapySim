@@ -68,8 +68,15 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
                                                  20);
 
   CellModel cellModel(fWater, fBoronWater, checkOverlaps);
-  cellModel.BuildPatch(tumorLogical, config.GetTumorPosition(), CellType::Tumor, 1, fCells);
-  cellModel.BuildPatch(normalLogical, config.GetNormalPosition(), CellType::Normal, 100000, fCells);
+  if (config.GetMode() == TherapyMode::Problem2) {
+    cellModel.BuildPatch(tumorLogical, config.GetTumorPosition(), CellType::Tumor, 1, fCells,
+                         G4ThreeVector(-120. * micrometer, 0., 0.));
+    cellModel.BuildPatch(tumorLogical, config.GetTumorPosition(), CellType::Normal, 100000, fCells,
+                         G4ThreeVector(120. * micrometer, 0., 0.));
+  } else {
+    cellModel.BuildPatch(tumorLogical, config.GetTumorPosition(), CellType::Tumor, 1, fCells);
+    cellModel.BuildPatch(normalLogical, config.GetNormalPosition(), CellType::Normal, 100000, fCells);
+  }
 
   return worldPhysical;
 }

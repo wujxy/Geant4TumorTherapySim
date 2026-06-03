@@ -5,6 +5,10 @@
 #include "G4AnalysisManager.hh"
 #include "G4SystemOfUnits.hh"
 
+#include "CLHEP/Units/PhysicalConstants.h"
+
+#include <algorithm>
+
 namespace {
 constexpr G4int kRunTree = 0;
 constexpr G4int kEventTree = 1;
@@ -63,7 +67,12 @@ void TherapyAnalysisManager::BeginRun(G4int nEvents, const std::vector<CellInfo>
   const G4ThreeVector tumorSize = config.GetTumorSize();
   constexpr G4double density = 1.0 * g / cm3;
   fTumorRegionMass = density * tumorSize.x() * tumorSize.y() * tumorSize.z();
-  fNormalRegionMass = fTumorRegionMass;
+  const G4double torsoVolume = (260. * mm) * (120. * mm) * (500. * mm);
+  const G4double neckVolume = CLHEP::pi * (50. * mm) * (50. * mm) * (90. * mm);
+  const G4double headVolume = 4. * CLHEP::pi * (90. * mm) * (90. * mm) * (90. * mm) / 3.;
+  const G4double legVolume = 2. * CLHEP::pi * (55. * mm) * (55. * mm) * (820. * mm);
+  const G4double phantomVolume = torsoVolume + neckVolume + headVolume + legVolume;
+  fNormalRegionMass = density * std::max(0., phantomVolume - tumorSize.x() * tumorSize.y() * tumorSize.z());
 
   CreateObjects(config.GetSaveStepTree());
   FillRunTree(nEvents, static_cast<G4int>(cells.size()));
@@ -140,7 +149,7 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   }
 
   analysis->CreateH1("hDoseTumor", "Tumor region event dose;Dose (Gy);Events", 100, 0., 5.);
-  analysis->CreateH1("hDoseNormal", "Normal region event dose;Dose (Gy);Events", 100, 0., 5.);
+  analysis->CreateH1("hDoseNormal", "Normal tissue event dose;Dose (Gy);Events", 100, 0., 5.);
   analysis->CreateH1("hDoseTumorCells", "Tumor cell dose;Dose (Gy);Cells", 100, 0., 20.);
   analysis->CreateH1("hDoseNormalCells", "Normal cell dose;Dose (Gy);Cells", 100, 0., 20.);
   analysis->CreateH1("hDoseNucleusTumor", "Tumor nucleus dose;Dose (Gy);Cells", 100, 0., 20.);

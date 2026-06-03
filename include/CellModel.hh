@@ -20,7 +20,8 @@ public:
                   const G4ThreeVector& motherGlobalPosition,
                   CellType cellType,
                   G4int firstCellID,
-                  std::vector<CellInfo>& cells) const;
+                  std::vector<CellInfo>& cells,
+                  const G4ThreeVector& patchCenter = G4ThreeVector()) const;
 
 private:
   G4LogicalVolume* BuildSimpleCellLogical(const G4String& name) const;

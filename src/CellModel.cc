@@ -86,7 +86,8 @@ void CellModel::BuildPatch(G4LogicalVolume* mother,
                            const G4ThreeVector& motherGlobalPosition,
                            CellType cellType,
                            G4int firstCellID,
-                           std::vector<CellInfo>& cells) const
+                           std::vector<CellInfo>& cells,
+                           const G4ThreeVector& patchCenter) const
 {
   const auto& config = TherapyConfig::Instance();
   const G4bool detailed = config.GetMode() == TherapyMode::Problem2;
@@ -116,12 +117,12 @@ void CellModel::BuildPatch(G4LogicalVolume* mother,
         const G4double y = (iy - 0.5 * (ny - 1)) * pitch;
         const G4double z = (iz - 0.5 * (nz - 1)) * pitch;
         const G4ThreeVector localPosition(x, y, z);
-        new G4PVPlacement(nullptr, localPosition, cellLogical, prefix, mother, false, id, false);
+        new G4PVPlacement(nullptr, patchCenter + localPosition, cellLogical, prefix, mother, false, id, false);
 
         CellInfo info;
         info.id = id;
         info.type = cellType;
-        info.position = motherGlobalPosition + localPosition;
+        info.position = motherGlobalPosition + patchCenter + localPosition;
         info.mass = cellMass;
         info.nucleusMass = nucleusMass;
         info.boronRegionMass = (cellType == CellType::Tumor && boronMode == BoronMode::Shell) ? shellMass : cellMass;

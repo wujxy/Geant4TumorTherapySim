@@ -7,7 +7,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig-g4sim")
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Circle, Rectangle
 
 try:
     import ROOT
@@ -94,6 +94,8 @@ def read_event_rows(path):
         rows.append({
             "dose_tumor": float(entry.doseTumorRegion_Gy),
             "dose_normal": float(entry.doseNormalRegion_Gy),
+            "edep_tumor": float(entry.edepTumorRegion_MeV),
+            "edep_normal": float(entry.edepNormalRegion_MeV),
             "n_alpha": int(entry.nAlpha),
             "n_li7": int(entry.nLi7),
             "n_gamma": int(entry.nGamma),
@@ -115,6 +117,9 @@ def read_cell_rows(path):
     for entry in tree:
         rows.append({
             "cell_type": int(entry.cellType),
+            "x_mm": float(entry.x_mm),
+            "y_mm": float(entry.y_mm),
+            "z_mm": float(entry.z_mm),
             "dose_cell": float(entry.doseCell_Gy),
             "dose_nucleus": float(entry.doseNucleus_Gy),
             "dose_boron": float(entry.doseBoronRegion_Gy),
@@ -249,7 +254,6 @@ def plot_q1_dose_heatmap():
         ax.add_patch(Rectangle((-130, -60), 260, 120, fill=False, edgecolor="white",
                                linestyle="--", linewidth=1.8, label="Human torso"))
         ax.add_patch(Rectangle((-55, -50), 20, 10, fill=False, edgecolor="#5dd3ff", linewidth=2, label="Tumor"))
-        ax.add_patch(Rectangle((-55, -20), 20, 10, fill=False, edgecolor="#55d17a", linewidth=2, label="Normal"))
         ax.annotate("", xy=(-45, -55), xytext=(-45, -75),
                     arrowprops={"arrowstyle": "->", "color": "white", "lw": 1.8})
         ax.text(-42, -72, "+y beam", color="white", fontsize=9, va="center")
@@ -270,6 +274,8 @@ def plot_q1_proton_energy_scan():
     tumor_dose = []
     normal_dose = []
     selectivity = []
+    tumor_edep = []
+    normal_edep = []
     peak_y = []
 
     for energy in SCAN_ENERGIES:
@@ -280,12 +286,16 @@ def plot_q1_proton_energy_scan():
             continue
         tumor = mean(r["dose_tumor"] for r in rows)
         normal = mean(r["dose_normal"] for r in rows)
+        tumor_e = mean(r["edep_tumor"] for r in rows)
+        normal_e = mean(r["edep_normal"] for r in rows)
         xs, ys = hist
         peak_index = max(range(len(ys)), key=lambda i: ys[i]) if ys else 0
         energies.append(energy)
         tumor_dose.append(tumor)
         normal_dose.append(normal)
-        selectivity.append(tumor / (tumor + normal) if (tumor + normal) > 0 else 0.0)
+        tumor_edep.append(tumor_e)
+        normal_edep.append(normal_e)
+        selectivity.append(tumor_e / (tumor_e + normal_e) if (tumor_e + normal_e) > 0 else 0.0)
         peak_y.append(xs[peak_index])
 
     fallback = not energies
@@ -293,19 +303,24 @@ def plot_q1_proton_energy_scan():
         energies = SCAN_ENERGIES
         tumor_dose = [math.exp(-0.5 * ((e - 45) / 8) ** 2) for e in energies]
         normal_dose = [0.15 + 0.015 * e for e in energies]
-        selectivity = [t / (t + n) if (t + n) > 0 else 0.0 for t, n in zip(tumor_dose, normal_dose)]
+        tumor_edep = tumor_dose
+        normal_edep = normal_dose
+        selectivity = [t / (t + n) if (t + n) > 0 else 0.0 for t, n in zip(tumor_edep, normal_edep)]
         peak_y = [-60 + 0.7 * e for e in energies]
 
     fig, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
-    axes[0].plot(energies, tumor_dose, marker="o", label="Tumor region", color="#c83f31", linewidth=2)
-    axes[0].plot(energies, normal_dose, marker="s", label="Normal region", color="#2f8f5f", linewidth=2)
+    tumor_plot = [max(value, 1.e-16) for value in tumor_dose]
+    normal_plot = [max(value, 1.e-16) for value in normal_dose]
+    axes[0].plot(energies, tumor_plot, marker="o", label="Tumor region", color="#c83f31", linewidth=2)
+    axes[0].plot(energies, normal_plot, marker="s", label="Whole normal tissue", color="#2f8f5f", linewidth=2)
+    axes[0].set_yscale("log")
     axes[0].set_ylabel("Mean event dose (Gy)")
     axes[0].set_title("Q1 Proton energy scan" + (" (reference fallback)" if fallback else ""))
     axes[0].legend()
     axes[0].grid(alpha=0.25)
 
-    axes[1].plot(energies, selectivity, marker="o", label="Tumor dose fraction", color="#3949ab", linewidth=2)
-    axes[1].set_ylabel("D_tumor / (D_tumor + D_normal)")
+    axes[1].plot(energies, selectivity, marker="o", label="Tumor deposited-energy fraction", color="#3949ab", linewidth=2)
+    axes[1].set_ylabel("E_tumor / (E_tumor + E_normal)")
     axes[1].set_ylim(-0.05, 1.05)
     axes[1].set_xlabel("Proton energy (MeV)")
     axes[1].grid(alpha=0.25)
@@ -338,10 +353,11 @@ def plot_q1_region_dose():
     width = 0.35
     plt.figure(figsize=(7, 5))
     plt.bar([i - width / 2 for i in x], tumor, width, label="Tumor region", color="#c83f31")
-    plt.bar([i + width / 2 for i in x], normal, width, label="Normal region", color="#2f8f5f")
+    plt.bar([i + width / 2 for i in x], normal, width, label="Whole normal tissue", color="#2f8f5f")
     plt.xticks(list(x), labels)
     plt.ylabel("Mean event dose (Gy)")
-    plt.title("Q1 Region dose comparison" + (" (reference fallback)" if fallback else ""))
+    plt.title("Q1 Tumor vs whole-normal-tissue dose" + (" (reference fallback)" if fallback else ""))
+    plt.yscale("log")
     plt.legend()
     plt.grid(axis="y", alpha=0.25)
     plt.tight_layout()
@@ -387,6 +403,92 @@ def q2_cell_means(path):
     }
 
 
+def plot_q2_boron_cell_model():
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4.5), sharex=True, sharey=True)
+    configs = [
+        ("Uniform B10 in cancer cell", "uniform"),
+        ("B10 in outer 1 um shell", "shell"),
+    ]
+    for ax, (title, mode) in zip(axes, configs):
+        cell = Circle((0, 0), 5.0, facecolor="#f2a3a3" if mode == "uniform" else "#f6d9d9",
+                      edgecolor="#b73b3b", linewidth=2, alpha=0.75)
+        ax.add_patch(cell)
+        if mode == "shell":
+            shell = Circle((0, 0), 5.0, facecolor="none", edgecolor="#d38b2f", linewidth=8, alpha=0.8)
+            ax.add_patch(shell)
+            inner = Circle((0, 0), 4.0, facecolor="#f9eeee", edgecolor="none", alpha=0.9)
+            ax.add_patch(inner)
+        nucleus = Circle((0, 0), 2.5, facecolor="#6077c9", edgecolor="#263f99", linewidth=1.5, alpha=0.85)
+        ax.add_patch(nucleus)
+        ax.text(0, 0, "nucleus", color="white", ha="center", va="center", fontsize=9)
+        ax.annotate("alpha / Li7\nshort range", xy=(3.5, 0.4), xytext=(6.5, 4.0),
+                    arrowprops={"arrowstyle": "->", "lw": 1.3}, fontsize=9)
+        ax.set_title(title)
+        ax.set_aspect("equal")
+        ax.set_xlim(-8, 10)
+        ax.set_ylim(-7, 7)
+        ax.set_xlabel("um")
+        ax.grid(alpha=0.2)
+    axes[0].set_ylabel("um")
+    fig.suptitle("Q2 Cell-scale boron distribution model")
+    fig.tight_layout()
+    fig.savefig(FIG_DIR / "Q2_boron_distribution_cell_model.png", dpi=180)
+    plt.close(fig)
+
+
+def plot_q2_micro_dose_map():
+    datasets = [
+        ("Uniform B10", ROOT_FILES["bnct_uniform"]),
+        ("Outer shell B10", ROOT_FILES["bnct_shell"]),
+    ]
+    def projected_columns(rows):
+        columns = {}
+        for row in rows:
+            x_um = round((row["x_mm"] + 45.0) * 1000.0, 3)
+            z_um = round((row["z_mm"] - 30.0) * 1000.0, 3)
+            key = (x_um, z_um, row["cell_type"])
+            if key not in columns:
+                columns[key] = {"x": x_um, "z": z_um, "cell_type": row["cell_type"], "dose": 0.0}
+            columns[key]["dose"] += row["dose_cell"]
+        return list(columns.values())
+
+    all_columns = []
+    for _, path in datasets:
+        all_columns.extend(projected_columns(read_cell_rows(path)))
+    max_dose = max((r["dose"] for r in all_columns), default=0.0)
+    if max_dose <= 0:
+        max_dose = 1.0
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5.2), sharex=True, sharey=True, constrained_layout=True)
+    image = None
+    for ax, (title, path) in zip(axes, datasets):
+        columns = projected_columns(read_cell_rows(path))
+        xs = [r["x"] for r in columns]
+        zs = [r["z"] for r in columns]
+        dose = [r["dose"] for r in columns]
+        colors = ["#c83f31" if r["cell_type"] == 1 else "#2f8f5f" for r in columns]
+        image = ax.scatter(xs, zs, c=dose, s=95, cmap="inferno", vmin=0, vmax=max_dose,
+                           edgecolors=colors, linewidths=0.7)
+        ax.axvline(0, color="white", linestyle="--", linewidth=1.0, alpha=0.65)
+        ax.annotate("neutron beam\ncross-section", xy=(0, -105), xytext=(-70, -145),
+                    arrowprops={"arrowstyle": "->", "color": "white", "lw": 1.2},
+                    color="white", fontsize=9)
+        ax.set_title(title)
+        ax.set_xlabel("x relative to tumor center (um)")
+        ax.set_aspect("equal")
+        ax.set_xlim(-260, 260)
+        ax.set_ylim(-160, 160)
+        ax.grid(alpha=0.18)
+    axes[0].set_ylabel("z relative to tumor center (um)")
+    axes[1].scatter([], [], s=60, facecolor="none", edgecolor="#c83f31", label="Cancer cells")
+    axes[1].scatter([], [], s=60, facecolor="none", edgecolor="#2f8f5f", label="Normal cells in tumor")
+    axes[1].legend(loc="upper right")
+    fig.suptitle("Q2 Representative tumor micro-region dose map")
+    fig.colorbar(image, ax=axes, label="Projected cell-column dose (Gy)", fraction=0.035, pad=0.02)
+    fig.savefig(FIG_DIR / "Q2_micro_dose_map_uniform_vs_shell.png", dpi=180)
+    plt.close(fig)
+
+
 def plot_q2_nucleus_dose():
     uniform = q2_cell_means(ROOT_FILES["bnct_uniform"])
     shell = q2_cell_means(ROOT_FILES["bnct_shell"])
@@ -410,6 +512,31 @@ def plot_q2_nucleus_dose():
     plt.grid(axis="y", alpha=0.25)
     plt.tight_layout()
     plt.savefig(FIG_DIR / "Q2_bnct_nucleus_dose.png", dpi=180)
+    plt.savefig(FIG_DIR / "Q2_nucleus_dose_selectivity.png", dpi=180)
+    plt.close()
+
+
+def plot_q2_selectivity_index():
+    uniform = q2_cell_means(ROOT_FILES["bnct_uniform"])
+    shell = q2_cell_means(ROOT_FILES["bnct_shell"])
+    fallback = uniform is None or shell is None
+    if fallback:
+        uniform = {"tumor_nucleus": 1.0, "normal_nucleus": 0.12}
+        shell = {"tumor_nucleus": 0.62, "normal_nucleus": 0.10}
+    labels = ["Uniform B10", "Outer shell B10"]
+    values = []
+    for item in (uniform, shell):
+        total = item["tumor_nucleus"] + item["normal_nucleus"]
+        values.append(item["tumor_nucleus"] / total if total > 0 else 0.0)
+
+    plt.figure(figsize=(6.8, 4.7))
+    plt.bar(labels, values, color=["#7b519d", "#d38b2f"])
+    plt.ylim(0, 1.05)
+    plt.ylabel("D_cancer_nucleus / (D_cancer_nucleus + D_normal_nucleus)")
+    plt.title("Q2 BNCT cell-scale selectivity index" + (" (reference fallback)" if fallback else ""))
+    plt.grid(axis="y", alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(FIG_DIR / "Q2_bnct_selectivity_index.png", dpi=180)
     plt.close()
 
 
@@ -449,6 +576,7 @@ def plot_q2_secondary_yield():
     plt.grid(axis="y", alpha=0.25)
     plt.tight_layout()
     plt.savefig(FIG_DIR / "Q2_bnct_secondary_yield.png", dpi=180)
+    plt.savefig(FIG_DIR / "Q2_secondary_yield.png", dpi=180)
     plt.close()
 
 
@@ -457,24 +585,32 @@ def plot_q2_cell_dose_spectra():
         ("Uniform B10", ROOT_FILES["bnct_uniform"], "#7b519d"),
         ("Outer shell B10", ROOT_FILES["bnct_shell"], "#d38b2f"),
     ]
-    plt.figure(figsize=(8, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8), constrained_layout=True)
     fallback = False
     for label, path, color in datasets:
         rows = read_cell_rows(path)
         tumor = [r["dose_cell"] for r in rows if r["cell_type"] == 1 and r["dose_cell"] > 0]
+        nucleus = [r["dose_nucleus"] for r in rows if r["cell_type"] == 1 and r["dose_nucleus"] > 0]
         if not tumor:
             fallback = True
             tumor = [math.exp(-i / 10) for i in range(1, 60)]
-        plt.hist(tumor, bins=40, histtype="step", linewidth=2, label=label, color=color)
-    plt.xlabel("Tumor cell dose (Gy)")
-    plt.ylabel("Cell count")
-    plt.title("Q2 Tumor cell dose spectra" + (" (reference fallback)" if fallback else ""))
-    plt.yscale("log")
-    plt.legend()
-    plt.grid(alpha=0.25)
-    plt.tight_layout()
-    plt.savefig(FIG_DIR / "Q2_cell_dose_spectra.png", dpi=180)
-    plt.close()
+        if not nucleus:
+            nucleus = [0.0]
+        axes[0].hist(tumor, bins=40, histtype="step", linewidth=2, label=label, color=color)
+        axes[1].hist(nucleus, bins=40, histtype="step", linewidth=2, label=label, color=color)
+    axes[0].set_xlabel("Tumor cell dose (Gy)")
+    axes[0].set_ylabel("Cell count")
+    axes[0].set_title("Whole cancer-cell dose")
+    axes[1].set_xlabel("Cancer nucleus dose (Gy)")
+    axes[1].set_title("Cancer-nucleus dose")
+    for ax in axes:
+        ax.set_yscale("log")
+        ax.legend()
+        ax.grid(alpha=0.25)
+    fig.suptitle("Q2 Cell and nucleus dose spectra" + (" (reference fallback)" if fallback else ""))
+    fig.savefig(FIG_DIR / "Q2_cell_dose_spectra.png", dpi=180)
+    fig.savefig(FIG_DIR / "Q2_cell_nucleus_dose_spectra.png", dpi=180)
+    plt.close(fig)
 
 
 def plot_q2_boron_distribution():
@@ -504,7 +640,10 @@ def main():
     plot_q1_proton_energy_scan()
     plot_q1_region_dose()
     plot_q1_let_spectra()
+    plot_q2_boron_cell_model()
+    plot_q2_micro_dose_map()
     plot_q2_nucleus_dose()
+    plot_q2_selectivity_index()
     plot_q2_secondary_yield()
     plot_q2_cell_dose_spectra()
     plot_q2_boron_distribution()

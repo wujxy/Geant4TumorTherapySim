@@ -49,12 +49,12 @@ void SteppingAction::UserSteppingAction(const G4Step* step)
   const G4int cellID = ExtractCellID(touchable);
 
   const G4bool inTumorRegion = TouchableContains(touchable, "TumorRegion");
-  const G4bool inNormalRegion = TouchableContains(touchable, "NormalRegion");
   const G4bool inPhantom =
     TouchableContains(touchable, "Torso") ||
     TouchableContains(touchable, "Neck") ||
     TouchableContains(touchable, "Head") ||
     TouchableContains(touchable, "Leg");
+  const G4bool inNormalRegion = inPhantom && !inTumorRegion;
   const G4bool inNucleus = TouchableContains(touchable, "Nucleus");
   G4String currentVolumeName = "unknown";
   if (prePoint->GetPhysicalVolume()) {
