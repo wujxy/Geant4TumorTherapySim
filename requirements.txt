@@ -1,0 +1,5 @@
+Geant4 >= 11.4.0
+ROOT >= 6.36.06
+CMake >= 3.16
+C++17 compiler
+JUNO environment: /home/NagaiYoru/juno_work/juno_env/J25.7.3/setup.sh

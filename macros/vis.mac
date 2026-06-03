@@ -1,0 +1,26 @@
+/control/verbose 1
+/run/verbose 1
+/event/verbose 0
+/tracking/verbose 0
+
+/therapy/mode problem1
+/therapy/boronMode none
+/therapy/outputFile vis_check.root
+/therapy/saveStepTree false
+/therapy/tumorPosition -45 -45 30 mm
+/therapy/normalPosition 45 -45 30 mm
+/therapy/sourcePosition 0 -600 30 mm
+/therapy/sourceDirection 0 1 0
+/therapy/beamRadius 8 mm
+
+/run/initialize
+
+/vis/open OGL 900x700-0+0
+/vis/drawVolume
+/vis/viewer/set/viewpointThetaPhi 70 20
+/vis/viewer/set/style surface
+/vis/viewer/set/hiddenEdge 1
+/vis/scene/add/axes 0 0 0 200 mm
+/vis/scene/add/trajectories smooth
+/vis/scene/endOfEventAction accumulate 20
+/vis/viewer/flush

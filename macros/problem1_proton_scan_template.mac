@@ -1,0 +1,26 @@
+# Copy this file and change /gun/energy, /therapy/beamRadius, and source/tumor positions.
+# The first optimization score to inspect is:
+#   Score = (D_tumor / D_normal) * PeakToEntranceDoseRatio
+
+/control/verbose 1
+/run/verbose 1
+/event/verbose 0
+/tracking/verbose 0
+
+/therapy/mode problem1
+/therapy/boronMode none
+/therapy/outputFile output_problem1_proton_scan.root
+/therapy/saveStepTree false
+/therapy/tumorPosition -45 -45 30 mm
+/therapy/normalPosition 45 -45 30 mm
+/therapy/sourcePosition 0 -600 30 mm
+/therapy/sourceDirection 0 1 0
+/therapy/beamRadius 8 mm
+/therapy/cellPatchSize 200 200 200 um
+/therapy/cellPitch 12 um
+/therapy/cellDiameter 10 um
+
+/run/initialize
+/gun/particle proton
+/gun/energy 120 MeV
+/run/beamOn 1000

@@ -1,0 +1,16 @@
+build/
+*.root
+*.log
+*.csv
+*.o
+*.so
+*.dylib
+*.pcm
+*.a
+*.d
+__pycache__/
+.cache/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
