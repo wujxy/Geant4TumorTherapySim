@@ -1,11 +1,11 @@
-/control/verbose 1
-/run/verbose 1
+/control/verbose 0
+/run/verbose 0
 /event/verbose 0
 /tracking/verbose 0
 
 /therapy/mode problem2
 /therapy/boronMode uniform
-/therapy/outputFile output_problem2_bnct_uniform.root
+/therapy/outputFile output_problem2_bnct_uniform_fluence_10000events.root
 /therapy/saveStepTree false
 /therapy/tumorPosition -45 -45 30 mm
 /therapy/normalPosition -45 -15 30 mm
@@ -22,4 +22,4 @@
 /run/initialize
 /gun/particle neutron
 /gun/energy 0.5 eV
-/run/beamOn 20000
+/run/beamOn 10000

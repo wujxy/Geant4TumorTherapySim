@@ -154,8 +154,8 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   analysis->CreateH1("hDoseNormalCells", "Normal cell dose;Dose (Gy);Cells", 100, 0., 20.);
   analysis->CreateH1("hDoseNucleusTumor", "Tumor nucleus dose;Dose (Gy);Cells", 100, 0., 20.);
   analysis->CreateH1("hDoseNucleusNormal", "Normal nucleus dose;Dose (Gy);Cells", 100, 0., 20.);
-  analysis->CreateH1("hLETTumor", "Tumor LET;LET (MeV/um);Steps", 120, 0., 50.);
-  analysis->CreateH1("hLETNormal", "Normal LET;LET (MeV/um);Steps", 120, 0., 50.);
+  analysis->CreateH1("hLETTumor", "Tumor LET;LET (MeV/um);Steps", 200, 0., 2.);
+  analysis->CreateH1("hLETNormal", "Normal LET;LET (MeV/um);Steps", 200, 0., 2.);
   analysis->CreateH1("hDepthDose", "Depth-dose profile;y (mm);Energy deposit (MeV)", 200, -200., 200.);
   analysis->CreateH1("hSecondaryParticles", "Secondaries;type;count", 4, 0., 4.);
   analysis->CreateH3("hVoxelDose3D", "Tumor/normal voxel edep;x (mm);y (mm);z (mm)",

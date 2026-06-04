@@ -1,25 +1,23 @@
-/control/verbose 1
-/run/verbose 1
+/control/verbose 0
+/run/verbose 0
 /event/verbose 0
 /tracking/verbose 0
 
-/therapy/mode problem2
-/therapy/boronMode uniform
-/therapy/outputFile output_problem2_bnct_uniform.root
+/therapy/mode problem1
+/therapy/boronMode none
+/therapy/outputFile output_problem1_gamma_0p2MeV.root
 /therapy/saveStepTree false
 /therapy/tumorPosition -45 -45 30 mm
 /therapy/normalPosition -45 -15 30 mm
 /therapy/sourcePosition -45 -600 30 mm
 /therapy/sourceDirection 0 1 0
-/therapy/beamRadius 150 um
+/therapy/beamRadius 8 mm
 /therapy/cellPatchSize 200 200 200 um
 /therapy/cellPitch 12 um
 /therapy/cellDiameter 10 um
-/therapy/nucleusRadius 2.5 um
-/therapy/boronPPM 500000
 /therapy/killDoseThreshold 2 Gy
 
 /run/initialize
-/gun/particle neutron
-/gun/energy 0.5 eV
-/run/beamOn 20000
+/gun/particle gamma
+/gun/energy 0.2 MeV
+/run/beamOn 1000

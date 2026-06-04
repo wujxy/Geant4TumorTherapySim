@@ -23,6 +23,12 @@ public:
                   std::vector<CellInfo>& cells,
                   const G4ThreeVector& patchCenter = G4ThreeVector()) const;
 
+  void BuildMixedPatch(G4LogicalVolume* mother,
+                       const G4ThreeVector& motherGlobalPosition,
+                       G4int firstCellID,
+                       std::vector<CellInfo>& cells,
+                       const G4ThreeVector& patchCenter = G4ThreeVector()) const;
+
 private:
   G4LogicalVolume* BuildSimpleCellLogical(const G4String& name) const;
   G4LogicalVolume* BuildDetailedCellLogical(const G4String& name,

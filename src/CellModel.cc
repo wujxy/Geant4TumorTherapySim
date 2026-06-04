@@ -132,3 +132,60 @@ void CellModel::BuildPatch(G4LogicalVolume* mother,
     }
   }
 }
+
+void CellModel::BuildMixedPatch(G4LogicalVolume* mother,
+                                const G4ThreeVector& motherGlobalPosition,
+                                G4int firstCellID,
+                                std::vector<CellInfo>& cells,
+                                const G4ThreeVector& patchCenter) const
+{
+  const auto& config = TherapyConfig::Instance();
+  const G4bool detailed = config.GetMode() == TherapyMode::Problem2;
+  const BoronMode boronMode = config.GetBoronMode();
+
+  G4LogicalVolume* tumorLogical = detailed
+    ? BuildDetailedCellLogical("MixedTumorCell", CellType::Tumor, boronMode)
+    : BuildSimpleCellLogical("MixedTumorCell");
+  G4LogicalVolume* normalLogical = detailed
+    ? BuildDetailedCellLogical("MixedNormalCell", CellType::Normal, boronMode)
+    : BuildSimpleCellLogical("MixedNormalCell");
+
+  const G4double radius = config.GetCellRadius();
+  const G4ThreeVector patchSize = config.GetCellPatchSize();
+  const G4double pitch = config.GetCellPitch();
+  const G4int nx = CountCells(patchSize.x(), pitch, radius);
+  const G4int ny = CountCells(patchSize.y(), pitch, radius);
+  const G4int nz = CountCells(patchSize.z(), pitch, radius);
+
+  const G4double cellMass = SphereMass(radius);
+  const G4double nucleusMass = detailed ? SphereMass(config.GetNucleusRadius()) : 0.;
+  const G4double shellMass = detailed ? std::max(0.0, cellMass - SphereMass(radius - config.GetShellThickness())) : 0.;
+
+  G4int id = firstCellID;
+  for (G4int ix = 0; ix < nx; ++ix) {
+    for (G4int iy = 0; iy < ny; ++iy) {
+      for (G4int iz = 0; iz < nz; ++iz) {
+        const G4bool isTumor = ((ix + iz) % 2) == 0;
+        const CellType cellType = isTumor ? CellType::Tumor : CellType::Normal;
+        G4LogicalVolume* cellLogical = isTumor ? tumorLogical : normalLogical;
+        const G4String name = isTumor ? "MixedTumorCell" : "MixedNormalCell";
+
+        const G4double x = (ix - 0.5 * (nx - 1)) * pitch;
+        const G4double y = (iy - 0.5 * (ny - 1)) * pitch;
+        const G4double z = (iz - 0.5 * (nz - 1)) * pitch;
+        const G4ThreeVector localPosition(x, y, z);
+        new G4PVPlacement(nullptr, patchCenter + localPosition, cellLogical, name, mother, false, id, false);
+
+        CellInfo info;
+        info.id = id;
+        info.type = cellType;
+        info.position = motherGlobalPosition + patchCenter + localPosition;
+        info.mass = cellMass;
+        info.nucleusMass = nucleusMass;
+        info.boronRegionMass = (isTumor && boronMode == BoronMode::Shell) ? shellMass : cellMass;
+        cells.push_back(info);
+        ++id;
+      }
+    }
+  }
+}
