@@ -8,6 +8,7 @@
 #include "CLHEP/Units/PhysicalConstants.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace {
 constexpr G4int kRunTree = 0;
@@ -68,10 +69,19 @@ void TherapyAnalysisManager::BeginRun(G4int nEvents, const std::vector<CellInfo>
   constexpr G4double density = 1.0 * g / cm3;
   fTumorRegionMass = density * tumorSize.x() * tumorSize.y() * tumorSize.z();
   const G4double torsoVolume = (260. * mm) * (120. * mm) * (500. * mm);
-  const G4double neckVolume = CLHEP::pi * (50. * mm) * (50. * mm) * (90. * mm);
-  const G4double headVolume = 4. * CLHEP::pi * (90. * mm) * (90. * mm) * (90. * mm) / 3.;
+  const G4double neckRadius = 50. * mm;
+  const G4double headRadius = 90. * mm;
+  const G4double headCenterZ = 430. * mm;
+  const G4double neckBottomZ = 250. * mm;
+  const G4double headNeckIntersectionOffset = std::sqrt(headRadius * headRadius - neckRadius * neckRadius);
+  const G4double neckTopZ = headCenterZ - headNeckIntersectionOffset;
+  const G4double neckVolume = CLHEP::pi * neckRadius * neckRadius * (neckTopZ - neckBottomZ);
+  const G4double headVolume = 4. * CLHEP::pi * headRadius * headRadius * headRadius / 3.;
+  const G4double headNeckCapHeight = headRadius - headNeckIntersectionOffset;
+  const G4double headNeckCutVolume =
+    CLHEP::pi * headNeckCapHeight * headNeckCapHeight * (headRadius - headNeckCapHeight / 3.);
   const G4double legVolume = 2. * CLHEP::pi * (55. * mm) * (55. * mm) * (820. * mm);
-  const G4double phantomVolume = torsoVolume + neckVolume + headVolume + legVolume;
+  const G4double phantomVolume = torsoVolume + neckVolume + (headVolume - headNeckCutVolume) + legVolume;
   fNormalRegionMass = density * std::max(0., phantomVolume - tumorSize.x() * tumorSize.y() * tumorSize.z());
 
   CreateObjects(config.GetSaveStepTree());
