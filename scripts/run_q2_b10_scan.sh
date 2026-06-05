@@ -26,7 +26,7 @@ cmake --build build -j2
 
 declare -a b10_scan_ppm=(1000 3000 10000 30000 100000 300000 500000)
 declare -a b10_modes=(uniform shell)
-B10_SCAN_EVENTS="${B10_SCAN_EVENTS:-20000}"
+B10_SCAN_EVENTS="${B10_SCAN_EVENTS:-200000}"
 
 for mode in "${b10_modes[@]}"; do
   for ppm in "${b10_scan_ppm[@]}"; do

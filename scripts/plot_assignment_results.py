@@ -734,51 +734,6 @@ def projected_columns(rows):
     return list(columns.values())
 
 
-def plot_q2_therapy_comparison_summary():
-    data = q2_therapy_comparison_data()
-    labels = [item["label"] for item in data]
-    colors = [item["color"] for item in data]
-    x = list(range(len(labels)))
-    width = 0.36
-    floor = 1.e-16
-
-    fig, axes = plt.subplots(1, 3, figsize=(14.2, 5.2), constrained_layout=True)
-    tumor_values = [max(item["tumor_cell"], floor) for item in data]
-    normal_values = [max(item["normal_cell"], floor) for item in data]
-    axes[0].bar([i - width / 2 for i in x], tumor_values, width, label="Cancer cells", color=colors, alpha=0.90)
-    axes[0].bar([i + width / 2 for i in x], normal_values, width, label="Normal cells", color=colors, alpha=0.42, hatch="//")
-    axes[0].set_yscale("log")
-    axes[0].set_ylabel("Mean whole-cell dose (Gy)")
-    axes[0].set_title("Mean whole-cell dose")
-    axes[0].legend(fontsize=8)
-
-    localization = [item["cell_localization"] for item in data]
-    axes[1].bar(x, localization, color=colors, alpha=0.86)
-    axes[1].set_ylim(0, 1.05)
-    axes[1].set_ylabel("D_cancer_cell / (D_cancer_cell + D_normal_cell)")
-    axes[1].set_title("Cell localization")
-
-    burden = [item["normal_cell"] / item["tumor_cell"] if item["tumor_cell"] > 0 else 0.0 for item in data]
-    axes[2].bar(x, burden, color=colors, alpha=0.86)
-    axes[2].set_ylabel("D_normal_cell / D_cancer_cell")
-    axes[2].set_title("Whole-cell normal burden")
-    axes[2].set_ylim(0, max(burden + [1.e-12]) * 1.16)
-
-    for ax in axes:
-        ax.set_xticks(x, labels, rotation=22, ha="right")
-        ax.grid(axis="y", alpha=0.25)
-    for ax, values in ((axes[1], localization), (axes[2], burden)):
-        offset = max(values + [1.e-12]) * 0.025
-        for index, value in enumerate(values):
-            ax.text(index, value + offset, f"{value:.2f}" if value >= 0.01 else f"{value:.1e}",
-                    ha="center", va="bottom", fontsize=8)
-
-    fallback = any(item["fallback"] for item in data)
-    fig.suptitle("Q2 Whole-cell therapy comparison in the same patch" + (" (reference fallback)" if fallback else ""))
-    fig.savefig(FIG_DIR / "Q2_therapy_comparison_summary.png", dpi=180)
-    plt.close(fig)
-
-
 def fallback_projected_columns(case_name):
     columns = []
     case_scale = {
@@ -800,11 +755,15 @@ def fallback_projected_columns(case_name):
 
 def plot_q2_therapy_comparison_projected_maps():
     data = q2_therapy_comparison_data()
-    fig, axes = plt.subplots(1, 4, figsize=(15.2, 4.8), sharex=True, sharey=True, constrained_layout=True)
+    fig = plt.figure(figsize=(16.8, 9.2), constrained_layout=True)
+    grid = fig.add_gridspec(3, 4, height_ratios=[4.8, 1.45, 1.35], hspace=0.035, wspace=0.025)
+    map_axes = [fig.add_subplot(grid[0, index]) for index in range(4)]
+    dose_ax = fig.add_subplot(grid[1, :])
+    localization_ax = fig.add_subplot(grid[2, :])
     image = None
     fallback = False
 
-    for ax, item in zip(axes, data):
+    for ax, item in zip(map_axes, data):
         rows = read_cell_rows(ROOT_FILES[item["root_key"]])
         columns = projected_columns(rows)
         if not columns:
@@ -843,10 +802,53 @@ def plot_q2_therapy_comparison_projected_maps():
                 transform=ax.transAxes, ha="left", va="top", fontsize=8,
                 bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "#777777", "alpha": 0.82})
         ax.set_xlabel("x relative to tumor center (um)")
-    axes[0].set_ylabel("z relative to tumor center (um)")
-    axes[-1].legend(loc="lower right", fontsize=8)
-    fig.suptitle("Q2 Projected cell dose maps by therapy in the same patch" + (" (reference fallback)" if fallback else ""))
-    fig.colorbar(image, ax=axes, label="Panel-normalized projected cell dose", fraction=0.025, pad=0.02)
+
+    map_axes[0].set_ylabel("z relative to tumor center (um)")
+    map_axes[-1].legend(loc="lower right", fontsize=8)
+    labels = [item["label"] for item in data]
+    x = list(range(len(data)))
+    width = 0.34
+    tumor_values = [max(item["tumor_cell"], 1.e-16) for item in data]
+    normal_values = [max(item["normal_cell"], 1.e-16) for item in data]
+    dose_ax.bar(
+        [value - width / 2 for value in x],
+        tumor_values,
+        width,
+        color=[item["color"] for item in data],
+        label="Cancer cells",
+    )
+    dose_ax.bar(
+        [value + width / 2 for value in x],
+        normal_values,
+        width,
+        color=[item["color"] for item in data],
+        alpha=0.45,
+        hatch="//",
+        edgecolor="#333333",
+        linewidth=0.7,
+        label="Normal cells",
+    )
+    dose_ax.set_xticks(x, labels)
+    dose_ax.set_yscale("log")
+    dose_ax.set_ylabel("Mean whole-cell dose (Gy)")
+    dose_ax.set_title("Mean whole-cell dose")
+    dose_ax.grid(axis="y", alpha=0.25)
+    dose_ax.legend(ncol=2, fontsize=8, loc="upper left")
+    localization_values = [item["cell_localization"] for item in data]
+    localization_ax.bar(
+        labels,
+        localization_values,
+        color=[item["color"] for item in data],
+        width=0.62,
+    )
+    localization_ax.set_ylim(0, 1.05)
+    localization_ax.set_ylabel("D_cancer / (D_cancer + D_normal)")
+    localization_ax.set_title("Cell localization")
+    localization_ax.grid(axis="y", alpha=0.25)
+    for index, value in enumerate(localization_values):
+        localization_ax.text(index, value + 0.025, f"{value:.3f}", ha="center", va="bottom", fontsize=9)
+    fig.suptitle("Q2 Projected dose maps and whole-cell metrics by therapy" + (" (reference fallback)" if fallback else ""))
+    fig.colorbar(image, ax=map_axes, label="Panel-normalized projected cell dose", fraction=0.018, pad=0.012)
     fig.savefig(FIG_DIR / "Q2_therapy_comparison_projected_maps.png", dpi=180)
     plt.close(fig)
 
@@ -1135,18 +1137,24 @@ def plot_q2_boron_cell_model():
 
 def plot_q2_micro_dose_map():
     datasets = [
-        ("Uniform B10", ROOT_FILES["bnct_uniform"]),
-        ("Outer shell B10", ROOT_FILES["bnct_shell"]),
+        ("Uniform B10", neutron_fluence_root_path("uniform", 200000)),
+        ("Outer shell B10", neutron_fluence_root_path("shell", 200000)),
     ]
     def panel_metrics(rows):
         tumor = [row for row in rows if row["cell_type"] == 1]
         normal = [row for row in rows if row["cell_type"] == 0]
-        tumor_cell = mean(row["dose_cell"] for row in tumor)
-        normal_cell = mean(row["dose_cell"] for row in normal)
-        tumor_nucleus = mean(row["dose_nucleus"] for row in tumor)
-        normal_nucleus = mean(row["dose_nucleus"] for row in normal)
+        tumor_cell_values = [row["dose_cell"] for row in tumor]
+        normal_cell_values = [row["dose_cell"] for row in normal]
+        tumor_nucleus_values = [row["dose_nucleus"] for row in tumor]
+        normal_nucleus_values = [row["dose_nucleus"] for row in normal]
+        tumor_cell = mean(tumor_cell_values)
+        normal_cell = mean(normal_cell_values)
         ratio = tumor_cell / normal_cell if normal_cell > 0 else 0.0
-        return tumor_cell, normal_cell, tumor_nucleus, normal_nucleus, ratio
+        return {
+            "cell_means": [tumor_cell, normal_cell],
+            "nucleus_means": [mean(tumor_nucleus_values), mean(normal_nucleus_values)],
+            "ratio": ratio,
+        }
 
     all_columns = []
     for _, path in datasets:
@@ -1161,7 +1169,9 @@ def plot_q2_micro_dose_map():
     cell_bar_axes = [fig.add_subplot(grid[1, 0]), fig.add_subplot(grid[1, 1])]
     nucleus_bar_axes = [fig.add_subplot(grid[2, 0]), fig.add_subplot(grid[2, 1])]
     image = None
-    for ax, cell_bar_ax, nucleus_bar_ax, (title, path) in zip(axes, cell_bar_axes, nucleus_bar_axes, datasets):
+    for ax, cell_bar_ax, nucleus_bar_ax, (title, path) in zip(
+        axes, cell_bar_axes, nucleus_bar_axes, datasets
+    ):
         rows = read_cell_rows(path)
         columns = projected_columns(rows)
         for cell_type, marker, edge_color, label in (
@@ -1182,7 +1192,7 @@ def plot_q2_micro_dose_map():
                 linewidths=1.8,
                 label=label,
             )
-        tumor_cell, normal_cell, tumor_nucleus, normal_nucleus, ratio = panel_metrics(rows)
+        metrics = panel_metrics(rows)
         ax.add_patch(Circle((0, 0), 150.0, fill=False, edgecolor="#4a67c8", linestyle="--",
                             linewidth=1.4, alpha=0.75))
         ax.annotate("neutron beam\ncross-section", xy=(0, -105), xytext=(-92, -119),
@@ -1194,33 +1204,28 @@ def plot_q2_micro_dose_map():
         ax.set_xlim(-130, 130)
         ax.set_ylim(-130, 130)
         ax.grid(alpha=0.18)
-        cell_bar_values = [max(tumor_cell, 1.e-16), max(normal_cell, 1.e-16)]
-        cell_bar_ax.bar(["Cancer", "Normal"], cell_bar_values, color=["#c83f31", "#2f8f5f"], width=0.58)
+        cell_means = [max(value, 1.e-16) for value in metrics["cell_means"]]
+        cell_bar_ax.bar(["Cancer", "Normal"], cell_means, color=["#c83f31", "#2f8f5f"], width=0.58)
         cell_bar_ax.set_yscale("log")
-        cell_bar_ax.set_ylim(min(cell_bar_values) * 0.55, max(cell_bar_values) * 2.8)
         cell_bar_ax.set_ylabel("Mean cell dose\n(Gy)")
-        cell_bar_ax.set_title(f"Mean cell dose, cancer/normal={ratio:.1f}x", fontsize=10, pad=10)
+        cell_bar_ax.set_title(f"Mean cell dose, cancer/normal={metrics['ratio']:.1f}x", fontsize=10, pad=10)
         cell_bar_ax.grid(axis="y", alpha=0.25)
-        for index, value in enumerate(cell_bar_values):
+        for index, value in enumerate(cell_means):
             cell_bar_ax.text(index, value * 1.15, f"{value:.2e}", ha="center", va="bottom", fontsize=8)
 
-        nucleus_raw_values = [tumor_nucleus, normal_nucleus]
-        nucleus_floor = max(nucleus_raw_values + [1.e-12]) * 1.e-5
-        nucleus_bar_values = [max(value, nucleus_floor) for value in nucleus_raw_values]
-        nucleus_bar_ax.bar(["Cancer", "Normal"], nucleus_bar_values, color=["#c83f31", "#2f8f5f"], width=0.58)
+        nucleus_means = [max(value, 1.e-16) for value in metrics["nucleus_means"]]
+        nucleus_bar_ax.bar(["Cancer", "Normal"], nucleus_means, color=["#c83f31", "#2f8f5f"], width=0.58)
         nucleus_bar_ax.set_yscale("log")
-        nucleus_bar_ax.set_ylim(min(nucleus_bar_values) * 0.55, max(nucleus_bar_values) * 2.8)
         nucleus_bar_ax.set_ylabel("Mean nucleus dose\n(Gy)")
         nucleus_bar_ax.set_title("Mean nucleus dose", fontsize=10, pad=10)
         nucleus_bar_ax.grid(axis="y", alpha=0.25)
-        for index, (plot_value, raw_value) in enumerate(zip(nucleus_bar_values, nucleus_raw_values)):
-            label = "0" if raw_value <= 0 else f"{raw_value:.2e}"
-            nucleus_bar_ax.text(index, plot_value * 1.15, label, ha="center", va="bottom", fontsize=8)
+        for index, value in enumerate(nucleus_means):
+            nucleus_bar_ax.text(index, value * 1.15, f"{value:.2e}", ha="center", va="bottom", fontsize=8)
     axes[0].set_ylabel("z relative to tumor center (um)")
     axes[1].legend(loc="upper right")
     axes[1].tick_params(labelleft=False)
     fig.suptitle("Q2 Representative tumor micro-region projected dose map")
-    fig.colorbar(image, ax=axes, label="Projected cell dose summed over y (Gy)", fraction=0.035, pad=0.02)
+    fig.colorbar(image, ax=axes, label="Projected cell dose summed over y (Gy, linear scale)", fraction=0.035, pad=0.02)
     fig.savefig(FIG_DIR / "Q2_micro_dose_map_uniform_vs_shell.png", dpi=180)
     plt.close(fig)
 
@@ -1463,7 +1468,6 @@ def main():
     plot_q2_nucleus_dose_scatter()
     plot_q2_secondary_yield()
     plot_q2_cell_dose_spectra()
-    plot_q2_therapy_comparison_summary()
     plot_q2_therapy_comparison_projected_maps()
     plot_q2_b10_concentration_scan()
     plot_q2_neutron_fluence_scan()

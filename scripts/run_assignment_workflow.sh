@@ -43,7 +43,7 @@ declare -a gamma_scan_energies=(0.2 0.5 1 2 4 6 8 10 15)
 declare -a scan_energies=(30 35 40 45 50 55 60 70 80)
 declare -a b10_scan_ppm=(1000 3000 10000 30000 100000 300000 500000)
 declare -a b10_modes=(uniform shell)
-B10_SCAN_EVENTS="${B10_SCAN_EVENTS:-20000}"
+B10_SCAN_EVENTS="${B10_SCAN_EVENTS:-200000}"
 
 for energy in "${gamma_scan_energies[@]}"; do
   tag="${energy//./p}MeV"

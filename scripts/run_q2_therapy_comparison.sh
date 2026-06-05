@@ -63,5 +63,4 @@ done
 
 /usr/bin/python3 scripts/plot_assignment_results.py
 
-echo "Generated figures/Q2_therapy_comparison_summary.png"
 echo "Generated figures/Q2_therapy_comparison_projected_maps.png"

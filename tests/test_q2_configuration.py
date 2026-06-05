@@ -35,6 +35,7 @@ def test_q2_heatmap_embeds_mean_dose_bars_below_maps():
     assert "Mean nucleus dose" in heatmap_block
     assert "cell_bar_ax.bar" in heatmap_block
     assert "nucleus_bar_ax.bar" in heatmap_block
+    assert ".errorbar(" not in heatmap_block
 
 
 def test_q2_heatmap_uses_y_projected_columns_not_central_slice():
@@ -46,6 +47,18 @@ def test_q2_heatmap_uses_y_projected_columns_not_central_slice():
     assert "Projected cell dose" in heatmap_block
 
 
+def test_q2_heatmap_uses_high_statistics_results_and_linear_color_scale():
+    text = (PROJECT_DIR / "scripts" / "plot_assignment_results.py").read_text()
+    heatmap_block = text.split("def plot_q2_micro_dose_map():", 1)[1].split("def plot_q2_mixed_geometry_layout():", 1)[0]
+
+    assert 'neutron_fluence_root_path("uniform", 200000)' in heatmap_block
+    assert 'neutron_fluence_root_path("shell", 200000)' in heatmap_block
+    assert "LogNorm(" not in heatmap_block
+    assert "vmin=0" in heatmap_block
+    assert "vmax=max_dose" in heatmap_block
+    assert "linear scale" in heatmap_block
+
+
 def test_q2_b10_scan_points_and_paths():
     import sys
 
@@ -55,6 +68,14 @@ def test_q2_b10_scan_points_and_paths():
     assert plot.B10_SCAN_PPM == [1000, 3000, 10000, 30000, 100000, 300000, 500000]
     assert plot.b10_scan_root_path("uniform", 1000).name == "output_problem2_bnct_uniform_1000ppm.root"
     assert plot.b10_scan_root_path("shell", 500000).name == "output_problem2_bnct_shell_500000ppm.root"
+
+
+def test_q2_b10_scan_defaults_to_high_statistics_runs():
+    standalone_runner = (PROJECT_DIR / "scripts" / "run_q2_b10_scan.sh").read_text()
+    workflow_runner = (PROJECT_DIR / "scripts" / "run_assignment_workflow.sh").read_text()
+
+    assert 'B10_SCAN_EVENTS="${B10_SCAN_EVENTS:-200000}"' in standalone_runner
+    assert 'B10_SCAN_EVENTS="${B10_SCAN_EVENTS:-200000}"' in workflow_runner
 
 
 def test_q2_neutron_fluence_scan_points_and_paths():
@@ -140,31 +161,31 @@ def test_q2_therapy_comparison_runner_generates_control_macros():
     assert "/therapy/boronMode none" in script
     assert "/therapy/beamRadius 150 um" in script
     assert 'output_problem2_${case_name}.root' in script
-    assert "Q2_therapy_comparison_summary.png" in script
     assert "Q2_therapy_comparison_projected_maps.png" in script
+    assert "Q2_therapy_comparison_summary.png" not in script
     assert "Q2_therapy_comparison_dose_bars.png" not in script
     assert "Q2_therapy_comparison_selectivity.png" not in script
 
 
-def test_q2_therapy_comparison_registers_only_two_figures():
+def test_q2_therapy_comparison_registers_only_combined_figure():
     text = (PROJECT_DIR / "scripts" / "plot_assignment_results.py").read_text()
     main_block = text.split("def main():", 1)[1]
 
     expected_functions = [
-        "plot_q2_therapy_comparison_summary()",
         "plot_q2_therapy_comparison_projected_maps()",
     ]
     expected_figures = [
-        "Q2_therapy_comparison_summary.png",
         "Q2_therapy_comparison_projected_maps.png",
     ]
     removed_functions = [
+        "plot_q2_therapy_comparison_summary()",
         "plot_q2_therapy_comparison_dose_bars()",
         "plot_q2_therapy_comparison_selectivity()",
         "plot_q2_therapy_comparison_cell_spectra()",
         "plot_q2_therapy_comparison_secondary_yield()",
     ]
     removed_figures = [
+        "Q2_therapy_comparison_summary.png",
         "Q2_therapy_comparison_dose_bars.png",
         "Q2_therapy_comparison_selectivity.png",
         "Q2_therapy_comparison_cell_spectra.png",
@@ -181,16 +202,21 @@ def test_q2_therapy_comparison_registers_only_two_figures():
         assert figure_name not in text
 
 
-def test_q2_therapy_comparison_summary_uses_whole_cell_metrics():
+def test_q2_therapy_comparison_combined_figure_uses_bars_and_shared_localization_axis():
     text = (PROJECT_DIR / "scripts" / "plot_assignment_results.py").read_text()
-    summary_block = text.split("def plot_q2_therapy_comparison_summary():", 1)[1].split("def fallback_projected_columns", 1)[0]
+    combined_block = text.split("def plot_q2_therapy_comparison_projected_maps():", 1)[1].split("def plot_q2_b10_concentration_scan", 1)[0]
 
-    assert "Mean whole-cell dose" in summary_block
-    assert "Cell localization" in summary_block
-    assert "Whole-cell normal burden" in summary_block
-    assert 'item["normal_cell"] / item["tumor_cell"]' in summary_block
-    assert "nucleus_localization" not in summary_block
-    assert 'item["normal_burden"]' not in summary_block
+    assert "fig.add_gridspec(3, 4" in combined_block
+    assert "fig.add_subplot(grid[1, :])" in combined_block
+    assert "fig.add_subplot(grid[2, :])" in combined_block
+    assert "Mean whole-cell dose" in combined_block
+    assert "Cell localization" in combined_block
+    assert "dose_ax.bar" in combined_block
+    assert "localization_ax.bar" in combined_block
+    assert 'hatch="//"' in combined_block
+    assert ".errorbar(" not in combined_block
+    assert "Whole-cell normal burden" not in combined_block
+    assert "nucleus_localization" not in combined_block
 
 
 def test_q2_therapy_comparison_summary_metrics_are_defined():
@@ -210,7 +236,7 @@ def test_report_includes_q2_therapy_comparison_section():
 
     assert "### 4.7 BNCT 与常规射线在同一细胞 patch 下的对比" in report
     assert "不是替代 Q1" in report
-    assert "Q2_therapy_comparison_summary.png" in report
+    assert "Q2_therapy_comparison_summary.png" not in report
     assert "Q2_therapy_comparison_projected_maps.png" in report
     assert "Q2_therapy_comparison_dose_bars.png" not in report
     assert "Q2_therapy_comparison_selectivity.png" not in report
@@ -218,3 +244,13 @@ def test_report_includes_q2_therapy_comparison_section():
     assert "Q2_therapy_comparison_secondary_yield.png" not in report
     assert "正常细胞核的保护更强" in report
     assert "肿瘤细胞核输送剂量的能力弱于 uniform" in report
+
+
+def test_report_documents_high_statistics_q2_figures():
+    report = (PROJECT_DIR / "G4sim_reporter.md").read_text()
+    hotspot_section = report.split("### 4.4 固定浓度下的热点图与剂量比较", 1)[1].split("### 4.5 B10 浓度扫描", 1)[0]
+    concentration_section = report.split("### 4.5 B10 浓度扫描", 1)[1].split("### 4.6 相对中子注量扫描", 1)[0]
+
+    assert "`200000` histories" in hotspot_section
+    assert "共享线性色标" in hotspot_section
+    assert "每个浓度点使用 `200000` histories" in concentration_section
