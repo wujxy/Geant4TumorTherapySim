@@ -28,10 +28,13 @@ def test_q2_mixed_patch_keeps_xz_column_cell_type_fixed_along_y():
 
 def test_q2_heatmap_embeds_mean_dose_bars_below_maps():
     text = (PROJECT_DIR / "scripts" / "plot_assignment_results.py").read_text()
+    heatmap_block = text.split("def plot_q2_micro_dose_map():", 1)[1].split("def plot_q2_mixed_geometry_layout():", 1)[0]
 
-    assert "fig.add_gridspec(2, 2" in text
+    assert "fig.add_gridspec(3, 2" in heatmap_block
     assert "Mean cell dose" in text
-    assert "bar_ax.bar" in text
+    assert "Mean nucleus dose" in heatmap_block
+    assert "cell_bar_ax.bar" in heatmap_block
+    assert "nucleus_bar_ax.bar" in heatmap_block
 
 
 def test_q2_heatmap_uses_y_projected_columns_not_central_slice():
@@ -102,3 +105,116 @@ def test_q2_redundant_bar_figures_are_not_generated():
     assert "plot_q2_selectivity_index()" not in main_block
     assert "Q2_bnct_selectivity_index.png" not in main_block
     assert "Q2_nucleus_dose_selectivity.png" not in main_block
+
+
+def test_q2_gamma_and_proton_macros_use_shared_cell_patch():
+    expected_common = [
+        "/therapy/mode problem2",
+        "/therapy/boronMode none",
+        "/therapy/sourcePosition -45 -600 30 mm",
+        "/therapy/sourceDirection 0 1 0",
+        "/therapy/beamRadius 150 um",
+        "/therapy/cellPatchSize 200 200 200 um",
+        "/therapy/cellPitch 12 um",
+        "/therapy/cellDiameter 10 um",
+        "/therapy/nucleusRadius 2.5 um",
+        "/run/beamOn 20000",
+    ]
+    macro_expectations = {
+        "problem2_gamma.mac": ["/therapy/outputFile output_problem2_gamma.root", "/gun/particle gamma", "/gun/energy 1 MeV"],
+        "problem2_proton.mac": ["/therapy/outputFile output_problem2_proton.root", "/gun/particle proton", "/gun/energy 45 MeV"],
+    }
+
+    for macro_name, specific_lines in macro_expectations.items():
+        text = (PROJECT_DIR / "macros" / macro_name).read_text()
+        for line in expected_common + specific_lines:
+            assert line in text
+
+
+def test_q2_therapy_comparison_runner_generates_control_macros():
+    script = (PROJECT_DIR / "scripts" / "run_q2_therapy_comparison.sh").read_text()
+
+    assert 'declare -A particles=(["gamma"]="gamma" ["proton"]="proton")' in script
+    assert 'declare -A energies=(["gamma"]="1 MeV" ["proton"]="45 MeV")' in script
+    assert "/therapy/mode problem2" in script
+    assert "/therapy/boronMode none" in script
+    assert "/therapy/beamRadius 150 um" in script
+    assert 'output_problem2_${case_name}.root' in script
+    assert "Q2_therapy_comparison_summary.png" in script
+    assert "Q2_therapy_comparison_projected_maps.png" in script
+    assert "Q2_therapy_comparison_dose_bars.png" not in script
+    assert "Q2_therapy_comparison_selectivity.png" not in script
+
+
+def test_q2_therapy_comparison_registers_only_two_figures():
+    text = (PROJECT_DIR / "scripts" / "plot_assignment_results.py").read_text()
+    main_block = text.split("def main():", 1)[1]
+
+    expected_functions = [
+        "plot_q2_therapy_comparison_summary()",
+        "plot_q2_therapy_comparison_projected_maps()",
+    ]
+    expected_figures = [
+        "Q2_therapy_comparison_summary.png",
+        "Q2_therapy_comparison_projected_maps.png",
+    ]
+    removed_functions = [
+        "plot_q2_therapy_comparison_dose_bars()",
+        "plot_q2_therapy_comparison_selectivity()",
+        "plot_q2_therapy_comparison_cell_spectra()",
+        "plot_q2_therapy_comparison_secondary_yield()",
+    ]
+    removed_figures = [
+        "Q2_therapy_comparison_dose_bars.png",
+        "Q2_therapy_comparison_selectivity.png",
+        "Q2_therapy_comparison_cell_spectra.png",
+        "Q2_therapy_comparison_secondary_yield.png",
+    ]
+
+    for function_call in expected_functions:
+        assert function_call in main_block
+    for figure_name in expected_figures:
+        assert figure_name in text
+    for function_call in removed_functions:
+        assert function_call not in main_block
+    for figure_name in removed_figures:
+        assert figure_name not in text
+
+
+def test_q2_therapy_comparison_summary_uses_whole_cell_metrics():
+    text = (PROJECT_DIR / "scripts" / "plot_assignment_results.py").read_text()
+    summary_block = text.split("def plot_q2_therapy_comparison_summary():", 1)[1].split("def fallback_projected_columns", 1)[0]
+
+    assert "Mean whole-cell dose" in summary_block
+    assert "Cell localization" in summary_block
+    assert "Whole-cell normal burden" in summary_block
+    assert 'item["normal_cell"] / item["tumor_cell"]' in summary_block
+    assert "nucleus_localization" not in summary_block
+    assert 'item["normal_burden"]' not in summary_block
+
+
+def test_q2_therapy_comparison_summary_metrics_are_defined():
+    import sys
+
+    sys.path.insert(0, str(PROJECT_DIR / "scripts"))
+    import plot_assignment_results as plot
+
+    assert plot.therapy_comparison_root_path("gamma").name == "output_problem2_gamma.root"
+    assert plot.therapy_comparison_root_path("proton").name == "output_problem2_proton.root"
+    assert plot.normal_burden(2.0, 0.5) == 0.25
+    assert plot.normal_burden(0.0, 0.5) == 0.0
+
+
+def test_report_includes_q2_therapy_comparison_section():
+    report = (PROJECT_DIR / "G4sim_reporter.md").read_text()
+
+    assert "### 4.7 BNCT 与常规射线在同一细胞 patch 下的对比" in report
+    assert "不是替代 Q1" in report
+    assert "Q2_therapy_comparison_summary.png" in report
+    assert "Q2_therapy_comparison_projected_maps.png" in report
+    assert "Q2_therapy_comparison_dose_bars.png" not in report
+    assert "Q2_therapy_comparison_selectivity.png" not in report
+    assert "Q2_therapy_comparison_cell_spectra.png" not in report
+    assert "Q2_therapy_comparison_secondary_yield.png" not in report
+    assert "正常细胞核的保护更强" in report
+    assert "肿瘤细胞核输送剂量的能力弱于 uniform" in report
