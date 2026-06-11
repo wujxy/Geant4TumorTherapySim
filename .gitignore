@@ -1,7 +1,13 @@
 build/
+.DS_Store
+.pnpm-store/
+
+# Geant4 / analysis outputs
 *.root
 *.log
 *.csv
+
+# Native build artifacts
 *.o
 *.so
 *.dylib
@@ -14,3 +20,20 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Nested report repository
+report/
