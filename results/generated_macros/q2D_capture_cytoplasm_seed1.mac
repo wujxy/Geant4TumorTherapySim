@@ -1,0 +1,21 @@
+/control/verbose 0
+/run/verbose 0
+/event/verbose 0
+/tracking/verbose 0
+
+/therapy/mode problem2
+/therapy/boronMode cytoplasm
+/therapy/sourceMode b10Capture
+/therapy/outputFile output_q2D_capture_cytoplasm_seed1.root
+/therapy/saveStepTree false
+/therapy/tumorPosition 0 -80 0 mm
+/therapy/normalPosition 0 80 0 mm
+/therapy/cellPatchSize 200 200 200 um
+/therapy/cellPitch 12 um
+/therapy/cellDiameter 10 um
+/therapy/nucleusRadius 2.5 um
+/therapy/boronPPM 342857
+
+/random/setSeeds 11111111 98765431
+/run/initialize
+/run/beamOn 100000

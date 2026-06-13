@@ -24,8 +24,12 @@ public:
     fModeCmd->SetCandidates("problem1 problem2");
 
     fBoronModeCmd = new G4UIcmdWithAString("/therapy/boronMode", this);
-    fBoronModeCmd->SetGuidance("Set boron mode: none, uniform, or shell.");
-    fBoronModeCmd->SetCandidates("none uniform shell");
+    fBoronModeCmd->SetGuidance("Set boron mode: none, uniform, cytoplasm, or shell.");
+    fBoronModeCmd->SetCandidates("none uniform cytoplasm shell");
+
+    fSourceModeCmd = new G4UIcmdWithAString("/therapy/sourceMode", this);
+    fSourceModeCmd->SetGuidance("Set primary source mode: beam or b10Capture.");
+    fSourceModeCmd->SetCandidates("beam b10Capture");
 
     fOutputFileCmd = new G4UIcmdWithAString("/therapy/outputFile", this);
     fOutputFileCmd->SetGuidance("Set output ROOT file name.");
@@ -71,6 +75,12 @@ public:
     fBoronPPMCmd = new G4UIcmdWithADouble("/therapy/boronPPM", this);
     fBoronPPMCmd->SetGuidance("Set B10 mass concentration in ppm for borated material.");
 
+    fB10CaptureBiasCmd = new G4UIcmdWithADouble("/therapy/b10CaptureBias", this);
+    fB10CaptureBiasCmd->SetGuidance(
+      "Multiply neutron-capture occurrence cross section in B10-bearing material.");
+    fB10CaptureBiasCmd->SetParameterName("b10CaptureBias", false);
+    fB10CaptureBiasCmd->SetRange("b10CaptureBias>=1.");
+
     fKillDoseThresholdCmd = new G4UIcmdWithADoubleAndUnit("/therapy/killDoseThreshold", this);
     fKillDoseThresholdCmd->SetGuidance("Set simple cell kill dose threshold.");
     fKillDoseThresholdCmd->SetUnitCategory("Dose");
@@ -79,6 +89,7 @@ public:
   ~TherapyMessenger()
   {
     delete fKillDoseThresholdCmd;
+    delete fB10CaptureBiasCmd;
     delete fBoronPPMCmd;
     delete fNucleusRadiusCmd;
     delete fCellDiameterCmd;
@@ -91,6 +102,7 @@ public:
     delete fTumorPositionCmd;
     delete fSaveStepTreeCmd;
     delete fOutputFileCmd;
+    delete fSourceModeCmd;
     delete fBoronModeCmd;
     delete fModeCmd;
     delete fDirectory;
@@ -100,6 +112,7 @@ public:
   {
     if (command == fModeCmd) fConfig->SetMode(value);
     else if (command == fBoronModeCmd) fConfig->SetBoronMode(value);
+    else if (command == fSourceModeCmd) fConfig->SetSourceMode(value);
     else if (command == fOutputFileCmd) fConfig->SetOutputFile(value);
     else if (command == fSaveStepTreeCmd) fConfig->SetSaveStepTree(fSaveStepTreeCmd->GetNewBoolValue(value));
     else if (command == fTumorPositionCmd) fConfig->SetTumorPosition(fTumorPositionCmd->GetNew3VectorValue(value));
@@ -112,6 +125,9 @@ public:
     else if (command == fCellDiameterCmd) fConfig->SetCellDiameter(fCellDiameterCmd->GetNewDoubleValue(value));
     else if (command == fNucleusRadiusCmd) fConfig->SetNucleusRadius(fNucleusRadiusCmd->GetNewDoubleValue(value));
     else if (command == fBoronPPMCmd) fConfig->SetBoronPPM(fBoronPPMCmd->GetNewDoubleValue(value));
+    else if (command == fB10CaptureBiasCmd) {
+      fConfig->SetB10CaptureBias(fB10CaptureBiasCmd->GetNewDoubleValue(value));
+    }
     else if (command == fKillDoseThresholdCmd) fConfig->SetKillDoseThreshold(fKillDoseThresholdCmd->GetNewDoubleValue(value));
   }
 
@@ -120,6 +136,7 @@ private:
   G4UIdirectory* fDirectory = nullptr;
   G4UIcmdWithAString* fModeCmd = nullptr;
   G4UIcmdWithAString* fBoronModeCmd = nullptr;
+  G4UIcmdWithAString* fSourceModeCmd = nullptr;
   G4UIcmdWithAString* fOutputFileCmd = nullptr;
   G4UIcmdWithABool* fSaveStepTreeCmd = nullptr;
   G4UIcmdWith3VectorAndUnit* fTumorPositionCmd = nullptr;
@@ -132,6 +149,7 @@ private:
   G4UIcmdWithADoubleAndUnit* fCellDiameterCmd = nullptr;
   G4UIcmdWithADoubleAndUnit* fNucleusRadiusCmd = nullptr;
   G4UIcmdWithADouble* fBoronPPMCmd = nullptr;
+  G4UIcmdWithADouble* fB10CaptureBiasCmd = nullptr;
   G4UIcmdWithADoubleAndUnit* fKillDoseThresholdCmd = nullptr;
 };
 
@@ -144,12 +162,13 @@ TherapyConfig& TherapyConfig::Instance()
 TherapyConfig::TherapyConfig()
   : fMode(TherapyMode::Problem1),
     fBoronMode(BoronMode::None),
+    fSourceMode(SourceMode::Beam),
     fOutputFile("output.root"),
     fSaveStepTree(false),
-    fTumorSize(20. * mm, 10. * mm, 30. * mm),
-    fTumorPosition(-45. * mm, -45. * mm, 30. * mm),
-    fNormalPosition(45. * mm, -45. * mm, 30. * mm),
-    fSourcePosition(0., -600. * mm, 30. * mm),
+    fTumorSize(10. * mm, 20. * mm, 30. * mm),
+    fTumorPosition(0., -80. * mm, 0.),
+    fNormalPosition(0., 80. * mm, 0.),
+    fSourcePosition(0., -600. * mm, 0.),
     fSourceDirection(0., 1., 0.),
     fBeamRadius(5. * mm),
     fCellPatchSize(200. * micrometer, 200. * micrometer, 200. * micrometer),
@@ -158,6 +177,7 @@ TherapyConfig::TherapyConfig()
     fNucleusRadius(2.5 * micrometer),
     fShellThickness(1. * micrometer),
     fBoronPPM(1000.),
+    fB10CaptureBias(1.0),
     fKillDoseThreshold(2. * gray)
 {
   fMessenger = std::make_unique<TherapyMessenger>(this);
@@ -178,6 +198,8 @@ void TherapyConfig::SetBoronMode(const G4String& value)
 {
   if (value == "uniform") {
     fBoronMode = BoronMode::Uniform;
+  } else if (value == "cytoplasm") {
+    fBoronMode = BoronMode::Cytoplasm;
   } else if (value == "shell") {
     fBoronMode = BoronMode::Shell;
   } else {
@@ -185,11 +207,27 @@ void TherapyConfig::SetBoronMode(const G4String& value)
   }
 }
 
+void TherapyConfig::SetSourceMode(const G4String& value)
+{
+  fSourceMode = value == "b10Capture" ? SourceMode::B10Capture : SourceMode::Beam;
+}
+
 void TherapyConfig::SetSourceDirection(const G4ThreeVector& value)
 {
   if (value.mag2() > 0.) {
     fSourceDirection = value.unit();
   }
+}
+
+void TherapyConfig::SetB10CaptureBias(G4double value)
+{
+  if (value < 1.0) {
+    G4Exception("TherapyConfig::SetB10CaptureBias",
+                "InvalidB10CaptureBias",
+                FatalException,
+                "B10 capture bias factor must be at least 1.");
+  }
+  fB10CaptureBias = value;
 }
 
 G4int TherapyConfig::ModeCode() const
@@ -202,6 +240,11 @@ G4int TherapyConfig::BoronModeCode() const
   return static_cast<G4int>(fBoronMode);
 }
 
+G4int TherapyConfig::SourceModeCode() const
+{
+  return static_cast<G4int>(fSourceMode);
+}
+
 G4String TherapyConfig::ModeName() const
 {
   return fMode == TherapyMode::Problem2 ? "problem2" : "problem1";
@@ -210,6 +253,12 @@ G4String TherapyConfig::ModeName() const
 G4String TherapyConfig::BoronModeName() const
 {
   if (fBoronMode == BoronMode::Uniform) return "uniform";
+  if (fBoronMode == BoronMode::Cytoplasm) return "cytoplasm";
   if (fBoronMode == BoronMode::Shell) return "shell";
   return "none";
+}
+
+G4String TherapyConfig::SourceModeName() const
+{
+  return fSourceMode == SourceMode::B10Capture ? "b10Capture" : "beam";
 }

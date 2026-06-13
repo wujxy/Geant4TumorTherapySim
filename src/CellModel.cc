@@ -5,6 +5,7 @@
 #include "G4PVPlacement.hh"
 #include "G4Sphere.hh"
 #include "G4SystemOfUnits.hh"
+#include "G4UserLimits.hh"
 #include "G4VisAttributes.hh"
 
 #include "CLHEP/Units/PhysicalConstants.h"
@@ -13,6 +14,8 @@
 #include <cmath>
 
 namespace {
+constexpr G4double kDetailedCellMaxStep = 0.05 * micrometer;
+
 G4double SphereMass(G4double radius)
 {
   constexpr G4double density = 1.0 * g / cm3;
@@ -50,31 +53,38 @@ G4LogicalVolume* CellModel::BuildDetailedCellLogical(const G4String& name,
   const G4double nucleusRadius = config.GetNucleusRadius();
   const G4double innerRadius = std::max(nucleusRadius + 0.1 * micrometer, cellRadius - config.GetShellThickness());
   const G4bool isTumor = cellType == CellType::Tumor;
+  const G4bool useDetailedStepLimit = config.GetSourceMode() == SourceMode::B10Capture;
 
   G4Material* outerMaterial = fWater;
-  if (isTumor && (boronMode == BoronMode::Uniform || boronMode == BoronMode::Shell)) {
+  if (isTumor && (boronMode == BoronMode::Uniform ||
+                  boronMode == BoronMode::Cytoplasm ||
+                  boronMode == BoronMode::Shell)) {
     outerMaterial = fBoronWater;
   }
 
   auto outerSolid = new G4Orb(name + "OuterSolid", cellRadius);
   auto outerLogical = new G4LogicalVolume(outerSolid, outerMaterial, name + "LV");
+  if (useDetailedStepLimit) outerLogical->SetUserLimits(new G4UserLimits(kDetailedCellMaxStep));
   outerLogical->SetVisAttributes(new G4VisAttributes(isTumor ? G4Colour(0.9, 0.2, 0.1, 0.55)
                                                               : G4Colour(0.55, 0.85, 0.55, 0.45)));
 
   if (isTumor && boronMode == BoronMode::Shell) {
     auto innerSolid = new G4Orb(name + "CytoplasmSolid", innerRadius);
     auto innerLogical = new G4LogicalVolume(innerSolid, fWater, name + "CytoplasmLV");
+    if (useDetailedStepLimit) innerLogical->SetUserLimits(new G4UserLimits(kDetailedCellMaxStep));
     new G4PVPlacement(nullptr, G4ThreeVector(), innerLogical, name + "Cytoplasm", outerLogical, false, 0, fCheckOverlaps);
     innerLogical->SetVisAttributes(new G4VisAttributes(G4Colour(0.95, 0.65, 0.35, 0.45)));
 
     auto nucleusSolid = new G4Orb(name + "NucleusSolid", nucleusRadius);
     auto nucleusLogical = new G4LogicalVolume(nucleusSolid, fWater, name + "NucleusLV");
+    if (useDetailedStepLimit) nucleusLogical->SetUserLimits(new G4UserLimits(kDetailedCellMaxStep));
     new G4PVPlacement(nullptr, G4ThreeVector(), nucleusLogical, name + "Nucleus", innerLogical, false, 0, fCheckOverlaps);
     nucleusLogical->SetVisAttributes(new G4VisAttributes(G4Colour(0.2, 0.1, 0.8, 0.7)));
   } else {
     G4Material* nucleusMaterial = (isTumor && boronMode == BoronMode::Uniform) ? fBoronWater : fWater;
     auto nucleusSolid = new G4Orb(name + "NucleusSolid", nucleusRadius);
     auto nucleusLogical = new G4LogicalVolume(nucleusSolid, nucleusMaterial, name + "NucleusLV");
+    if (useDetailedStepLimit) nucleusLogical->SetUserLimits(new G4UserLimits(kDetailedCellMaxStep));
     new G4PVPlacement(nullptr, G4ThreeVector(), nucleusLogical, name + "Nucleus", outerLogical, false, 0, fCheckOverlaps);
     nucleusLogical->SetVisAttributes(new G4VisAttributes(G4Colour(0.2, 0.1, 0.8, 0.7)));
   }
@@ -108,6 +118,7 @@ void CellModel::BuildPatch(G4LogicalVolume* mother,
   const G4double cellMass = SphereMass(radius);
   const G4double nucleusMass = detailed ? SphereMass(config.GetNucleusRadius()) : 0.;
   const G4double shellMass = detailed ? std::max(0.0, cellMass - SphereMass(radius - config.GetShellThickness())) : 0.;
+  const G4double cytoplasmMass = detailed ? std::max(0.0, cellMass - nucleusMass) : 0.;
 
   G4int id = firstCellID;
   for (G4int ix = 0; ix < nx; ++ix) {
@@ -125,7 +136,10 @@ void CellModel::BuildPatch(G4LogicalVolume* mother,
         info.position = motherGlobalPosition + patchCenter + localPosition;
         info.mass = cellMass;
         info.nucleusMass = nucleusMass;
-        info.boronRegionMass = (cellType == CellType::Tumor && boronMode == BoronMode::Shell) ? shellMass : cellMass;
+        info.boronRegionMass =
+          (cellType == CellType::Tumor && boronMode == BoronMode::Shell) ? shellMass :
+          (cellType == CellType::Tumor && boronMode == BoronMode::Cytoplasm) ? cytoplasmMass :
+          cellMass;
         cells.push_back(info);
         ++id;
       }
@@ -160,6 +174,7 @@ void CellModel::BuildMixedPatch(G4LogicalVolume* mother,
   const G4double cellMass = SphereMass(radius);
   const G4double nucleusMass = detailed ? SphereMass(config.GetNucleusRadius()) : 0.;
   const G4double shellMass = detailed ? std::max(0.0, cellMass - SphereMass(radius - config.GetShellThickness())) : 0.;
+  const G4double cytoplasmMass = detailed ? std::max(0.0, cellMass - nucleusMass) : 0.;
 
   G4int id = firstCellID;
   for (G4int ix = 0; ix < nx; ++ix) {
@@ -182,7 +197,10 @@ void CellModel::BuildMixedPatch(G4LogicalVolume* mother,
         info.position = motherGlobalPosition + patchCenter + localPosition;
         info.mass = cellMass;
         info.nucleusMass = nucleusMass;
-        info.boronRegionMass = (isTumor && boronMode == BoronMode::Shell) ? shellMass : cellMass;
+        info.boronRegionMass =
+          (isTumor && boronMode == BoronMode::Shell) ? shellMass :
+          (isTumor && boronMode == BoronMode::Cytoplasm) ? cytoplasmMass :
+          cellMass;
         cells.push_back(info);
         ++id;
       }

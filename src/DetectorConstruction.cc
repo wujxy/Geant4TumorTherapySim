@@ -1,6 +1,7 @@
 #include "DetectorConstruction.hh"
 
 #include "CellModel.hh"
+#include "B10CaptureBiasOperator.hh"
 #include "HumanPhantom.hh"
 #include "TherapyConfig.hh"
 #include "TumorModel.hh"
@@ -10,6 +11,8 @@
 #include "G4Element.hh"
 #include "G4Isotope.hh"
 #include "G4LogicalVolume.hh"
+#include "G4LogicalVolumeStore.hh"
+#include "G4ios.hh"
 #include "G4Material.hh"
 #include "G4NistManager.hh"
 #include "G4PVPlacement.hh"
@@ -76,4 +79,22 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
   }
 
   return worldPhysical;
+}
+
+void DetectorConstruction::ConstructSDandField()
+{
+  const G4double bias = TherapyConfig::Instance().GetB10CaptureBias();
+  if (bias <= 1.0) return;
+
+  fBiasOperator = new B10CaptureBiasOperator(bias);
+  G4int attached = 0;
+  for (const auto logical : *G4LogicalVolumeStore::GetInstance()) {
+    const auto material = logical->GetMaterial();
+    if (material && material->GetName() == "B10_Borated_Water") {
+      fBiasOperator->AttachTo(logical);
+      ++attached;
+    }
+  }
+  G4cout << "[B10 capture bias] factor=" << bias
+         << ", attached borated logical volumes=" << attached << G4endl;
 }

@@ -1,0 +1,25 @@
+/control/verbose 0
+/run/verbose 0
+/event/verbose 0
+/tracking/verbose 0
+/therapy/mode problem2
+/therapy/boronMode uniform
+/therapy/sourceMode beam
+/therapy/b10CaptureBias 100
+/therapy/outputFile output_smoke_capture_bias_100.root
+/therapy/saveStepTree false
+/therapy/tumorPosition 0 -80 0 mm
+/therapy/normalPosition 0 80 0 mm
+/therapy/sourcePosition 0 -600 0 mm
+/therapy/sourceDirection 0 1 0
+/therapy/beamRadius 150 um
+/therapy/cellPatchSize 200 200 200 um
+/therapy/cellPitch 12 um
+/therapy/cellDiameter 10 um
+/therapy/nucleusRadius 2.5 um
+/therapy/boronPPM 300000
+/random/setSeeds 1357911 2468021
+/run/initialize
+/gun/particle neutron
+/gun/energy 0.5 eV
+/run/beamOn 10000

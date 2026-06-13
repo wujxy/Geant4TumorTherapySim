@@ -10,6 +10,7 @@
 
 class G4LogicalVolume;
 class G4Material;
+class B10CaptureBiasOperator;
 
 class DetectorConstruction : public G4VUserDetectorConstruction {
 public:
@@ -17,6 +18,7 @@ public:
   ~DetectorConstruction() override = default;
 
   G4VPhysicalVolume* Construct() override;
+  void ConstructSDandField() override;
 
   const std::vector<CellInfo>& GetCells() const { return fCells; }
 
@@ -26,6 +28,7 @@ private:
   G4Material* fWater = nullptr;
   G4Material* fWorldMaterial = nullptr;
   G4Material* fBoronWater = nullptr;
+  B10CaptureBiasOperator* fBiasOperator = nullptr;
   std::vector<CellInfo> fCells;
 };
 

@@ -17,7 +17,13 @@ enum class TherapyMode {
 enum class BoronMode {
   None = 0,
   Uniform = 1,
-  Shell = 2
+  Shell = 2,
+  Cytoplasm = 3
+};
+
+enum class SourceMode {
+  Beam = 0,
+  B10Capture = 1
 };
 
 class TherapyConfig {
@@ -29,9 +35,11 @@ public:
 
   TherapyMode GetMode() const { return fMode; }
   BoronMode GetBoronMode() const { return fBoronMode; }
+  SourceMode GetSourceMode() const { return fSourceMode; }
 
   void SetMode(const G4String& value);
   void SetBoronMode(const G4String& value);
+  void SetSourceMode(const G4String& value);
   void SetOutputFile(const G4String& value) { fOutputFile = value; }
   void SetSaveStepTree(G4bool value) { fSaveStepTree = value; }
   void SetTumorPosition(const G4ThreeVector& value) { fTumorPosition = value; }
@@ -44,6 +52,7 @@ public:
   void SetCellDiameter(G4double value) { fCellDiameter = value; }
   void SetNucleusRadius(G4double value) { fNucleusRadius = value; }
   void SetBoronPPM(G4double value) { fBoronPPM = value; }
+  void SetB10CaptureBias(G4double value);
   void SetKillDoseThreshold(G4double value) { fKillDoseThreshold = value; }
 
   G4String GetOutputFile() const { return fOutputFile; }
@@ -61,12 +70,15 @@ public:
   G4double GetNucleusRadius() const { return fNucleusRadius; }
   G4double GetShellThickness() const { return fShellThickness; }
   G4double GetBoronPPM() const { return fBoronPPM; }
+  G4double GetB10CaptureBias() const { return fB10CaptureBias; }
   G4double GetKillDoseThreshold() const { return fKillDoseThreshold; }
 
   G4int ModeCode() const;
   G4int BoronModeCode() const;
+  G4int SourceModeCode() const;
   G4String ModeName() const;
   G4String BoronModeName() const;
+  G4String SourceModeName() const;
 
 private:
   TherapyConfig();
@@ -74,6 +86,7 @@ private:
 
   TherapyMode fMode;
   BoronMode fBoronMode;
+  SourceMode fSourceMode;
   G4String fOutputFile;
   G4bool fSaveStepTree;
 
@@ -90,6 +103,7 @@ private:
   G4double fNucleusRadius;
   G4double fShellThickness;
   G4double fBoronPPM;
+  G4double fB10CaptureBias;
   G4double fKillDoseThreshold;
 
   std::unique_ptr<TherapyMessenger> fMessenger;

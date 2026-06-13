@@ -33,10 +33,25 @@ struct EventAccumulator {
   G4double edepNucleusTumor = 0.;
   G4double edepNucleusNormal = 0.;
   G4double edepBoronRegion = 0.;
+  G4double edepNucleusTumorGamma = 0.;
+  G4double edepNucleusTumorProton = 0.;
+  G4double edepNucleusTumorAlpha = 0.;
+  G4double edepNucleusTumorLi7 = 0.;
+  G4double edepNucleusNormalGamma = 0.;
+  G4double edepNucleusNormalProton = 0.;
+  G4double edepNucleusNormalAlpha = 0.;
+  G4double edepNucleusNormalLi7 = 0.;
   G4int nAlpha = 0;
   G4int nLi7 = 0;
   G4int nGamma = 0;
   G4int nElectron = 0;
+  G4double nAlphaWeighted = 0.;
+  G4double nLi7Weighted = 0.;
+  G4double nGammaWeighted = 0.;
+  G4double nElectronWeighted = 0.;
+  G4int forcedCaptureBranch = -1;
+  G4double forcedCaptureRadius = 0.;
+  G4double forcedInitialHighLET = 0.;
 };
 
 struct CellAccumulator {
@@ -44,9 +59,15 @@ struct CellAccumulator {
   G4double edepCell = 0.;
   G4double edepNucleus = 0.;
   G4double edepBoronRegion = 0.;
+  G4double edepNucleusGamma = 0.;
+  G4double edepNucleusProton = 0.;
+  G4double edepNucleusAlpha = 0.;
+  G4double edepNucleusLi7 = 0.;
   G4int hits = 0;
   G4int alphaHits = 0;
   G4int liHits = 0;
+  G4int alphaNucleusHits = 0;
+  G4int liNucleusHits = 0;
 };
 
 class TherapyAnalysisManager {
@@ -61,6 +82,9 @@ public:
   void AddEnergyDeposit(G4double edep,
                         G4double stepLength,
                         const G4ThreeVector& position,
+                        const G4ThreeVector& cellLocalPosition,
+                        const G4ThreeVector& cellLocalEndPosition,
+                        G4bool hasCellLocal,
                         G4int cellID,
                         G4bool inTumorRegion,
                         G4bool inNormalRegion,
@@ -71,12 +95,15 @@ public:
                         const G4String& processName,
                         const G4String& volumeName,
                         G4int eventID,
-                        G4int trackID);
+                        G4int trackID,
+                        G4double weight);
 
-  void AddSecondary(const G4String& particleName);
+  void AddSecondary(const G4String& particleName, G4double weight);
+  void RecordForcedCapture(G4int branch, G4double radius, G4double initialHighLET);
 
   G4double TumorRegionMass() const { return fTumorRegionMass; }
   G4double NormalRegionMass() const { return fNormalRegionMass; }
+  G4ThreeVector GetCellCenter(G4int cellID) const;
 
 private:
   TherapyAnalysisManager() = default;
@@ -87,6 +114,9 @@ private:
   void FillCellTree();
 
   EventAccumulator fEvent;
+  G4int fPendingForcedCaptureBranch = -1;
+  G4double fPendingForcedCaptureRadius = 0.;
+  G4double fPendingForcedInitialHighLET = 0.;
   std::map<G4int, CellAccumulator> fCells;
   G4double fTumorRegionMass = 0.;
   G4double fNormalRegionMass = 0.;

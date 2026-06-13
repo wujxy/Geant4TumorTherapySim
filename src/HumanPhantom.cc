@@ -10,8 +10,6 @@
 #include "G4Tubs.hh"
 #include "G4VisAttributes.hh"
 
-#include <cmath>
-
 HumanPhantom::HumanPhantom(G4Material* material, G4bool checkOverlaps)
   : fMaterial(material), fCheckOverlaps(checkOverlaps)
 {
@@ -25,38 +23,38 @@ HumanPhantomResult HumanPhantom::Build(G4LogicalVolume* worldLogical) const
   const G4double kHeadRadius = 90. * mm;
   const G4double kHeadCenterZ = 430. * mm;
   const G4double kNeckBottomZ = 250. * mm;
-  const G4double kHeadNeckIntersectionOffset = std::sqrt(kHeadRadius * kHeadRadius - kNeckRadius * kNeckRadius);
-  const G4double kNeckTopZ = kHeadCenterZ - kHeadNeckIntersectionOffset;
-  const G4double kNeckHalfHeight = 0.5 * (kNeckTopZ - kNeckBottomZ);
-  const G4double kNeckCenterZ = 0.5 * (kNeckTopZ + kNeckBottomZ);
+  const G4double kNeckEnvelopeTopZ = kHeadCenterZ;
+  const G4double kNeckEnvelopeHalfHeight = 0.5 * (kNeckEnvelopeTopZ - kNeckBottomZ);
+  const G4double kNeckEnvelopeCenterZ = 0.5 * (kNeckEnvelopeTopZ + kNeckBottomZ);
 
-  auto torsoSolid = new G4Box("TorsoSolid", 130. * mm, 60. * mm, 250. * mm);
+  auto torsoSolid = new G4Box("TorsoSolid", 60. * mm, 130. * mm, 250. * mm);
   auto torsoLogical = new G4LogicalVolume(torsoSolid, fMaterial, "TorsoLV");
   new G4PVPlacement(nullptr, G4ThreeVector(), torsoLogical, "Torso", worldLogical, false, 0, fCheckOverlaps);
   torsoLogical->SetVisAttributes(new G4VisAttributes(G4Colour(0.0, 0.75, 0.25, 0.35)));
   result.torsoLogical = torsoLogical;
 
-  auto neckSolid = new G4Tubs("NeckSolid", 0., kNeckRadius, kNeckHalfHeight, 0., 360. * deg);
+  auto neckEnvelopeSolid =
+    new G4Tubs("NeckEnvelopeSolid", 0., kNeckRadius, kNeckEnvelopeHalfHeight, 0., 360. * deg);
+  auto neckHeadCutSolid = new G4Orb("NeckHeadCutSolid", kHeadRadius);
+  auto neckSolid = new G4SubtractionSolid(
+    "NeckSolid",
+    neckEnvelopeSolid,
+    neckHeadCutSolid,
+    nullptr,
+    G4ThreeVector(0., 0., kHeadCenterZ - kNeckEnvelopeCenterZ));
   auto neckLogical = new G4LogicalVolume(neckSolid, fMaterial, "NeckLV");
-  new G4PVPlacement(nullptr, G4ThreeVector(0., 0., kNeckCenterZ), neckLogical, "Neck", worldLogical, false, 0, fCheckOverlaps);
+  new G4PVPlacement(nullptr, G4ThreeVector(0., 0., kNeckEnvelopeCenterZ), neckLogical, "Neck", worldLogical, false, 0, fCheckOverlaps);
   neckLogical->SetVisAttributes(new G4VisAttributes(G4Colour(1.0, 0.45, 0.0, 0.35)));
 
-  auto headSphereSolid = new G4Orb("HeadSphereSolid", kHeadRadius);
-  auto headNeckCutSolid = new G4Tubs("HeadNeckCutSolid", 0., kNeckRadius, kNeckHalfHeight, 0., 360. * deg);
-  auto headSolid = new G4SubtractionSolid(
-    "HeadSolid",
-    headSphereSolid,
-    headNeckCutSolid,
-    nullptr,
-    G4ThreeVector(0., 0., kNeckCenterZ - kHeadCenterZ));
+  auto headSolid = new G4Orb("HeadSolid", kHeadRadius);
   auto headLogical = new G4LogicalVolume(headSolid, fMaterial, "HeadLV");
   new G4PVPlacement(nullptr, G4ThreeVector(0., 0., kHeadCenterZ), headLogical, "Head", worldLogical, false, 0, fCheckOverlaps);
   headLogical->SetVisAttributes(new G4VisAttributes(G4Colour(1.0, 0.75, 0.0, 0.35)));
 
   auto legSolid = new G4Tubs("LegSolid", 0., 55. * mm, 410. * mm, 0., 360. * deg);
   auto legLogical = new G4LogicalVolume(legSolid, fMaterial, "LegLV");
-  new G4PVPlacement(nullptr, G4ThreeVector(-65. * mm, 0., -660. * mm), legLogical, "LeftLeg", worldLogical, false, 1, fCheckOverlaps);
-  new G4PVPlacement(nullptr, G4ThreeVector(65. * mm, 0., -660. * mm), legLogical, "RightLeg", worldLogical, false, 2, fCheckOverlaps);
+  new G4PVPlacement(nullptr, G4ThreeVector(0., -65. * mm, -660. * mm), legLogical, "LeftLeg", worldLogical, false, 1, fCheckOverlaps);
+  new G4PVPlacement(nullptr, G4ThreeVector(0., 65. * mm, -660. * mm), legLogical, "RightLeg", worldLogical, false, 2, fCheckOverlaps);
   legLogical->SetVisAttributes(new G4VisAttributes(G4Colour(0.0, 0.60, 0.90, 0.35)));
 
   return result;

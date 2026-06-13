@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import math
 import os
 import sys
@@ -24,7 +25,9 @@ if DEFAULT_ROOT_DIR.exists():
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 from matplotlib.patches import Circle, Rectangle
+import numpy as np
 
 try:
     import ROOT
@@ -46,14 +49,14 @@ ROOT_FILES = {
     "bnct_shell": PROJECT_DIR / "output_problem2_bnct_shell.root",
 }
 
-PROTON_SCAN_ENERGIES = [30, 35, 40, 45, 50, 55, 60, 70, 80]
+PROTON_SCAN_ENERGIES = [60, 65, 70, 75, 80, 85, 90, 95, 100]
 GAMMA_SCAN_ENERGIES = [0.2, 0.5, 1, 2, 4, 6, 8, 10, 15]
 SCAN_ENERGIES = PROTON_SCAN_ENERGIES
 B10_SCAN_PPM = [1000, 3000, 10000, 30000, 100000, 300000, 500000]
 Q2_BORON_MODES = ["uniform", "shell"]
 Q2_THERAPY_COMPARISON_CASES = [
     ("gamma", "Gamma 1 MeV", "q2_gamma", "#2f6db3"),
-    ("proton", "Proton 45 MeV", "q2_proton", "#c83f31"),
+    ("proton", "Proton 80 MeV", "q2_proton", "#c83f31"),
     ("bnct_uniform", "BNCT uniform", "bnct_uniform", "#7b519d"),
     ("bnct_shell", "BNCT shell", "bnct_shell", "#d38b2f"),
 ]
@@ -164,7 +167,7 @@ def read_event_rows(path):
         return []
     rows = []
     for entry in tree:
-        rows.append({
+        row = {
             "dose_tumor": float(entry.doseTumorRegion_Gy),
             "dose_normal": float(entry.doseNormalRegion_Gy),
             "edep_tumor": float(entry.edepTumorRegion_MeV),
@@ -173,9 +176,45 @@ def read_event_rows(path):
             "n_li7": int(entry.nLi7),
             "n_gamma": int(entry.nGamma),
             "n_electron": int(entry.nElectron),
-        })
+        }
+        for opt in (
+            "edepNucleusTumorGamma_MeV",
+            "edepNucleusTumorProton_MeV",
+            "edepNucleusTumorAlpha_MeV",
+            "edepNucleusTumorLi7_MeV",
+            "edepNucleusNormalGamma_MeV",
+            "edepNucleusNormalProton_MeV",
+            "edepNucleusNormalAlpha_MeV",
+            "edepNucleusNormalLi7_MeV",
+            "forcedCaptureBranch",
+            "forcedCaptureRadius_um",
+            "forcedInitialHighLET_MeV",
+        ):
+            if hasattr(entry, opt):
+                row[opt] = int(getattr(entry, opt)) if opt == "forcedCaptureBranch" else float(getattr(entry, opt))
+        rows.append(row)
     handle.Close()
     return rows
+
+
+def read_run_row(path):
+    handle = open_root(path)
+    if handle is None:
+        return {}
+    tree = handle.Get("RunTree")
+    if not tree or tree.GetEntries() == 0:
+        handle.Close()
+        return {}
+    tree.GetEntry(0)
+    row = {
+        "mode": int(tree.mode),
+        "boron_mode": int(tree.boronMode),
+        "n_events": int(tree.nEvents),
+        "source_mode": int(tree.sourceMode) if hasattr(tree, "sourceMode") else 0,
+        "b10_capture_bias": float(tree.b10CaptureBias) if hasattr(tree, "b10CaptureBias") else 1.0,
+    }
+    handle.Close()
+    return row
 
 
 def read_cell_rows(path):
@@ -188,7 +227,8 @@ def read_cell_rows(path):
         return []
     rows = []
     for entry in tree:
-        rows.append({
+        row = {
+            "cell_id": int(entry.cellID),
             "cell_type": int(entry.cellType),
             "x_mm": float(entry.x_mm),
             "y_mm": float(entry.y_mm),
@@ -198,9 +238,141 @@ def read_cell_rows(path):
             "dose_boron": float(entry.doseBoronRegion_Gy),
             "alpha_hits": int(entry.alphaHits),
             "li_hits": int(entry.liHits),
-        })
+        }
+        # New columns added in the Q2 re-design (per-particle nucleus edep + in-nucleus hits)
+        for opt in (
+            "edepNucleusGamma_MeV",
+            "edepNucleusProton_MeV",
+            "edepNucleusAlpha_MeV",
+            "edepNucleusLi7_MeV",
+            "alphaNucleusHits",
+            "liNucleusHits",
+            "edepNucleus_MeV",
+        ):
+            if hasattr(entry, opt):
+                row[opt] = float(getattr(entry, opt)) if not opt.endswith("Hits") else int(getattr(entry, opt))
+        rows.append(row)
     handle.Close()
     return rows
+
+
+def read_h2(path, hist_name):
+    """Return (x_edges, y_edges, grid[ny][nx]) for a 2D histogram.
+
+    Edges are bin lower edges plus the upper edge of the last bin so they can
+    be passed straight to pcolormesh. Grid is in (row=y, col=x) order to match
+    matplotlib's imshow / pcolormesh convention.
+    """
+    handle = open_root(path)
+    if handle is None:
+        return None
+    hist = handle.Get(hist_name)
+    if not hist:
+        handle.Close()
+        return None
+    xaxis = hist.GetXaxis()
+    yaxis = hist.GetYaxis()
+    nx = hist.GetNbinsX()
+    ny = hist.GetNbinsY()
+    x_edges = [xaxis.GetBinLowEdge(i) for i in range(1, nx + 1)] + [xaxis.GetBinUpEdge(nx)]
+    y_edges = [yaxis.GetBinLowEdge(i) for i in range(1, ny + 1)] + [yaxis.GetBinUpEdge(ny)]
+    grid = []
+    for iy in range(1, ny + 1):
+        row = [hist.GetBinContent(ix, iy) for ix in range(1, nx + 1)]
+        grid.append(row)
+    handle.Close()
+    return x_edges, y_edges, grid
+
+
+# === Q2 BNCT survival / kill rate (LQ + RBE) =========================
+# Parameters per the experiment-design doc (see docs/q2_timing_benchmark.md).
+RBE_GAMMA = 1.0       # γ/e- low-LET reference
+RBE_PROTON = 1.1      # standard clinical proton RBE
+RBE_HIGHLET_TUMOR = 1.3   # α/Li7 in tumor cells
+RBE_HIGHLET_NORMAL = 3.0  # α/Li7 in normal cells (more sensitive to high-LET)
+LQ_ALPHA_TUMOR = 0.3   # Gy^-1, tumor cell α coefficient (α/β = 10)
+LQ_BETA_TUMOR = 0.03   # Gy^-2
+LQ_ALPHA_NORMAL = 0.1  # Gy^-1, normal cell α (α/β = 3)
+LQ_BETA_NORMAL = 0.033 # Gy^-2
+
+
+def equiv_dose_gy(row, is_tumor):
+    """LQ-equivalent dose to the nucleus using RBE-weighted per-particle channels.
+
+    Falls back to plain doseNucleus_Gy when per-particle columns are missing
+    (e.g. when reading pre-rewrite ROOT files).
+    """
+    if "edepNucleusAlpha_MeV" not in row:
+        # Backwards-compat: lump everything into γ-equivalent.
+        return row.get("dose_nucleus", 0.0)
+    high = row.get("edepNucleusAlpha_MeV", 0.0) + row.get("edepNucleusLi7_MeV", 0.0)
+    low_g = row.get("edepNucleusGamma_MeV", 0.0)
+    low_p = row.get("edepNucleusProton_MeV", 0.0)
+    total_nuc = row.get("edepNucleus_MeV", 0.0)
+    if total_nuc <= 0:
+        return 0.0
+    # Convert MeV edep to Gy via the cell's recorded total nucleus dose
+    # (dose_nucleus = edepNucleus / nucleusMass / gray, computed in G4 already).
+    # We split it proportionally between channels then re-apply RBE.
+    dose_total = row.get("dose_nucleus", 0.0)
+    if dose_total <= 0:
+        return 0.0
+    frac_high = high / total_nuc
+    frac_lowg = low_g / total_nuc
+    frac_lowp = low_p / total_nuc
+    rbe_high = RBE_HIGHLET_TUMOR if is_tumor else RBE_HIGHLET_NORMAL
+    return dose_total * (frac_high * rbe_high + frac_lowg * RBE_GAMMA + frac_lowp * RBE_PROTON)
+
+
+def survival_lq(dose_eq, is_tumor):
+    a = LQ_ALPHA_TUMOR if is_tumor else LQ_ALPHA_NORMAL
+    b = LQ_BETA_TUMOR if is_tumor else LQ_BETA_NORMAL
+    return math.exp(-a * dose_eq - b * dose_eq * dose_eq)
+
+
+def lethal_hit(row):
+    """Geometric kill proxy: nucleus received >= 1 alpha or Li7 hit."""
+    return (row.get("alphaNucleusHits", 0) + row.get("liNucleusHits", 0)) > 0
+
+
+def cell_summary(rows):
+    """Aggregate one CellTree's worth of cells into per-class metrics.
+
+    Returns dict {tumor: {...}, normal: {...}}.
+    """
+    out = {}
+    for label, ctype in (("tumor", 1), ("normal", 0)):
+        sub = [r for r in rows if r["cell_type"] == ctype]
+        n = len(sub)
+        if n == 0:
+            out[label] = {
+                "n_cells": 0,
+                "mean_dose_cell": 0.0,
+                "mean_dose_nucleus": 0.0,
+                "mean_dose_eq": 0.0,
+                "mean_S": 1.0,
+                "lethal_fraction": 0.0,
+                "alpha_nuc_hits": 0,
+                "li_nuc_hits": 0,
+            }
+            continue
+        is_tumor = (ctype == 1)
+        doses_cell = [r["dose_cell"] for r in sub]
+        doses_nuc = [r["dose_nucleus"] for r in sub]
+        doses_eq = [equiv_dose_gy(r, is_tumor) for r in sub]
+        surv = [survival_lq(d, is_tumor) for d in doses_eq]
+        leth = sum(1 for r in sub if lethal_hit(r))
+        out[label] = {
+            "n_cells": n,
+            "mean_dose_cell": sum(doses_cell) / n,
+            "mean_dose_nucleus": sum(doses_nuc) / n,
+            "mean_dose_eq": sum(doses_eq) / n,
+            "mean_S": sum(surv) / n,
+            "lethal_fraction": leth / n,
+            "alpha_nuc_hits": sum(int(r.get("alphaNucleusHits", 0)) for r in sub),
+            "li_nuc_hits": sum(int(r.get("liNucleusHits", 0)) for r in sub),
+        }
+    return out
 
 
 def mean(values):
@@ -243,9 +415,9 @@ def histogram_weighted_mean(xs, counts):
 
 
 def fallback_depth():
-    depth = [x for x in range(-80, 61, 2)]
-    gamma = [math.exp(-0.012 * (x + 80)) * (1.0 + 0.05 * math.sin(x / 9)) for x in depth]
-    proton = [0.18 + 2.6 * math.exp(-0.5 * ((x + 45) / 8.0) ** 2) for x in depth]
+    depth = [x for x in range(-150, 151, 3)]
+    gamma = [math.exp(-0.006 * (y + 130)) * (1.0 + 0.05 * math.sin(y / 9)) for y in depth]
+    proton = [0.18 + 2.6 * math.exp(-0.5 * ((y + 73) / 8.0) ** 2) for y in depth]
     return depth, gamma, proton
 
 
@@ -269,7 +441,7 @@ def plot_q1_depth_dose():
 
     for ax in (source_ax, body_ax):
         ax.plot(x, gamma_norm, label="gamma 1 MeV", color="#2f6db3", linewidth=2)
-        ax.plot(x, proton_norm, label="proton 45 MeV", color="#c83f31", linewidth=2)
+        ax.plot(x, proton_norm, label="proton 85 MeV", color="#c83f31", linewidth=2)
         ax.grid(alpha=0.25)
         ax.set_ylim(-0.05, 1.05)
 
@@ -287,11 +459,11 @@ def plot_q1_depth_dose():
     source_ax.set_xlabel("Source region y (mm)")
     source_ax.set_ylabel("Normalized energy deposit")
 
-    body_ax.set_xlim(-80, 80)
-    body_ax.axvspan(-80, -60, color="#d7ecff", alpha=0.32, label="air range")
-    body_ax.axvspan(-60, 60, color="#e8e8e8", alpha=0.28, label="human range")
-    body_ax.axvspan(60, 80, color="#d7ecff", alpha=0.32)
-    body_ax.axvspan(-50, -40, color="#c83f31", alpha=0.12, label="tumor y-span")
+    body_ax.set_xlim(-150, 150)
+    body_ax.axvspan(-150, -130, color="#d7ecff", alpha=0.32, label="air range")
+    body_ax.axvspan(-130, 130, color="#e8e8e8", alpha=0.28, label="human range")
+    body_ax.axvspan(130, 150, color="#d7ecff", alpha=0.32)
+    body_ax.axvspan(-90, -70, color="#c83f31", alpha=0.12, label="tumor y-span")
     body_ax.set_xlabel("Human/tumor region y (mm)")
     body_ax.legend(loc="upper right")
 
@@ -304,7 +476,7 @@ def plot_q1_depth_dose():
     body_ax.plot([0, 0], [0, 1], transform=body_ax.transAxes, **break_kwargs)
 
     fig.suptitle("Q1 Depth-dose comparison with omitted air path" + (" (reference fallback)" if fallback else ""))
-    fig.text(0.41, 0.03, "Air path between y=-580 mm and y=-80 mm is omitted; deposition there is negligible.",
+    fig.text(0.41, 0.03, "Air path between y=-580 mm and y=-150 mm is omitted; deposition there is negligible.",
              ha="center", fontsize=9, color="#444444")
     fig.subplots_adjust(bottom=0.17, top=0.88)
     fig.savefig(FIG_DIR / "Q1_depth_dose.png", dpi=180)
@@ -314,7 +486,7 @@ def plot_q1_depth_dose():
 def plot_q1_dose_heatmap():
     maps = [
         ("gamma 1 MeV", ROOT_FILES["gamma"]),
-        ("proton 45 MeV", ROOT_FILES["proton"]),
+        ("proton 85 MeV", ROOT_FILES["proton"]),
     ]
     panels = []
     fallback = False
@@ -323,16 +495,16 @@ def plot_q1_dose_heatmap():
         if heatmap is None:
             fallback = True
             xs = [x for x in range(-80, 81, 4)]
-            ys = [y for y in range(-80, 21, 3)]
+            ys = [y for y in range(-150, 151, 4)]
             grid = []
             for y in ys:
                 row = []
                 for x in xs:
-                    beam = math.exp(-0.5 * ((x + 45) / 7.5) ** 2)
+                    beam = math.exp(-0.5 * (x / 7.5) ** 2)
                     if "proton" in label:
-                        depth = 0.2 + 2.3 * math.exp(-0.5 * ((y + 45) / 5.0) ** 2)
+                        depth = 0.2 + 2.3 * math.exp(-0.5 * ((y + 73) / 5.0) ** 2)
                     else:
-                        depth = math.exp(-0.015 * (y + 60))
+                        depth = math.exp(-0.006 * (y + 130))
                     row.append(beam * depth)
                 grid.append(row)
         else:
@@ -344,12 +516,12 @@ def plot_q1_dose_heatmap():
     for ax, (label, xs, ys, grid) in zip(axes, panels):
         extent = [min(xs), max(xs), min(ys), max(ys)]
         image = ax.imshow(grid, extent=extent, origin="lower", aspect="auto", cmap="inferno", vmin=0, vmax=1)
-        ax.add_patch(Rectangle((-130, -60), 260, 120, fill=False, edgecolor="white",
+        ax.add_patch(Rectangle((-60, -130), 120, 260, fill=False, edgecolor="white",
                                linestyle="--", linewidth=1.8, label="Human torso"))
-        ax.add_patch(Rectangle((-55, -50), 20, 10, fill=False, edgecolor="#5dd3ff", linewidth=2, label="Tumor"))
-        ax.annotate("", xy=(-45, -55), xytext=(-45, -75),
+        ax.add_patch(Rectangle((-5, -90), 10, 20, fill=False, edgecolor="#5dd3ff", linewidth=2, label="Tumor"))
+        ax.annotate("", xy=(0, -130), xytext=(0, -150),
                     arrowprops={"arrowstyle": "->", "color": "white", "lw": 1.8})
-        ax.text(-42, -72, "+y beam", color="white", fontsize=9, va="center")
+        ax.text(4, -147, "+y beam", color="white", fontsize=9, va="bottom")
         ax.set_title(label)
         ax.set_xlabel("x (mm)")
         ax.grid(alpha=0.12, color="white")
@@ -364,19 +536,20 @@ def plot_q1_dose_heatmap():
 
 def fallback_scan_heatmap(particle, energy):
     xs = [x for x in range(-140, 141, 6)]
-    ys = [y for y in range(-80, 81, 4)]
+    ys = [y for y in range(-140, 141, 4)]
     grid = []
     for y in ys:
         row = []
         for x in xs:
-            beam = math.exp(-0.5 * ((x + 45) / 7.5) ** 2)
+            beam = math.exp(-0.5 * (x / 7.5) ** 2)
             if particle == "proton":
-                peak = -60 + 0.7 * energy
+                peak = -130 + 0.64 * energy
                 depth = 0.15 + 2.3 * math.exp(-0.5 * ((y - peak) / 5.0) ** 2)
             else:
                 attenuation = 0.008 / max(math.sqrt(energy), 0.45)
-                buildup = 1.0 - math.exp(-0.12 * max(y + 60, 0.0))
-                depth = (0.35 + buildup) * math.exp(-attenuation * max(y + 60, 0.0))
+                traversed = max(y + 130, 0.0)
+                buildup = 1.0 - math.exp(-0.12 * traversed)
+                depth = (0.35 + buildup) * math.exp(-attenuation * traversed)
             row.append(beam * depth)
         grid.append(row)
     return xs, ys, grid
@@ -399,10 +572,10 @@ def plot_q1_particle_energy_heatmap_grid(particle, energies, title, output_name)
         extent = [min(xs), max(xs), min(ys), max(ys)]
         image = ax.imshow(normalize_grid(grid), extent=extent, origin="lower", aspect="auto",
                           cmap="inferno", vmin=0, vmax=1)
-        ax.add_patch(Rectangle((-130, -60), 260, 120, fill=False, edgecolor="white",
+        ax.add_patch(Rectangle((-60, -130), 120, 260, fill=False, edgecolor="white",
                                linestyle="--", linewidth=1.2))
-        ax.add_patch(Rectangle((-55, -50), 20, 10, fill=False, edgecolor="#5dd3ff", linewidth=1.8))
-        ax.annotate("", xy=(-45, -55), xytext=(-45, -75),
+        ax.add_patch(Rectangle((-5, -90), 10, 20, fill=False, edgecolor="#5dd3ff", linewidth=1.8))
+        ax.annotate("", xy=(0, -130), xytext=(0, -150),
                     arrowprops={"arrowstyle": "->", "color": "white", "lw": 1.2})
         ax.set_title(f"{energy:g} MeV")
         ax.grid(alpha=0.10, color="white")
@@ -475,9 +648,9 @@ def plot_q1_particle_energy_scan(particle, energies_arg, title, output_name, lin
     if fallback:
         energies = list(energies_arg)
         if particle == "proton":
-            tumor_dose = [math.exp(-0.5 * ((e - 45) / 8) ** 2) for e in energies]
+            tumor_dose = [math.exp(-0.5 * ((e - 80) / 10) ** 2) for e in energies]
             normal_dose = [0.15 + 0.015 * e for e in energies]
-            depth_metric = [-60 + 0.7 * e for e in energies]
+            depth_metric = [-130 + 0.64 * e for e in energies]
         else:
             tumor_dose = [0.18 + 0.06 * math.log1p(e) for e in energies]
             normal_dose = [0.22 + 0.09 * math.log1p(e) for e in energies]
@@ -503,9 +676,9 @@ def plot_q1_particle_energy_scan(particle, energies_arg, title, output_name, lin
     axes[1].set_xlabel(x_label)
     axes[1].grid(alpha=0.25)
     twin = axes[1].twinx()
-    depth_label = "Dose-weighted mean y" if particle == "gamma" else "Depth-dose peak y"
+    depth_label = "Energy-deposition-weighted mean y" if particle == "gamma" else "Depth-dose peak y"
     twin.plot(energies, depth_metric, marker="^", label=depth_label, color="#d38b2f", linewidth=2)
-    twin.axhspan(-50, -40, color="#c83f31", alpha=0.12, label="Tumor y-span")
+    twin.axhspan(-90, -70, color="#c83f31", alpha=0.12, label="Tumor y-span")
     twin.set_ylabel(f"{depth_label} (mm)")
 
     lines, labels = axes[1].get_legend_handles_labels()
@@ -641,7 +814,7 @@ def q2_scan_summary(path):
     normal_cell = mean(row["dose_cell"] for row in normal)
     tumor_nucleus = mean(row["dose_nucleus"] for row in tumor)
     normal_nucleus = mean(row["dose_nucleus"] for row in normal)
-    reaction_yield = sum(row["n_alpha"] + row["n_li7"] for row in event_rows)
+    reaction_yield = sum(row["n_li7"] for row in event_rows)
     return {
         "tumor_cell": tumor_cell,
         "normal_cell": normal_cell,
@@ -716,8 +889,8 @@ def projected_columns(rows):
         return []
     columns = {}
     for row in rows:
-        x_um = round((row["x_mm"] + 45.0) * 1000.0, 3)
-        z_um = round((row["z_mm"] - 30.0) * 1000.0, 3)
+        x_um = round(row["x_mm"] * 1000.0, 3)
+        z_um = round(row["z_mm"] * 1000.0, 3)
         key = (x_um, z_um, row["cell_type"])
         if key not in columns:
             columns[key] = {
@@ -921,8 +1094,8 @@ def plot_q2_b10_concentration_scan():
     axes[0, 1].set_ylabel("Mean nucleus dose (Gy)")
     axes[0, 1].set_yscale("log")
     axes[0, 1].set_title("Absolute nucleus dose")
-    axes[1, 0].set_ylabel("alpha + Li7 count")
-    axes[1, 0].set_title("BNCT charged-particle yield")
+    axes[1, 0].set_ylabel("Li7 count")
+    axes[1, 0].set_title("B10-capture proxy")
     axes[1, 1].set_ylabel("D_cancer_nucleus / D_cancer_cell")
     axes[1, 1].set_yscale("log")
     axes[1, 1].set_title("Cancer nucleus-to-cell dose ratio")
@@ -1010,8 +1183,8 @@ def plot_q2_neutron_fluence_scan():
     axes[1, 0].set_ylabel("D_cancer / (D_cancer + D_normal)")
     axes[1, 0].set_ylim(-0.02, 1.04)
     axes[1, 0].set_title("Dose localization fraction")
-    axes[1, 1].set_ylabel("alpha + Li7 count")
-    axes[1, 1].set_title("BNCT charged-particle yield")
+    axes[1, 1].set_ylabel("Li7 count")
+    axes[1, 1].set_title("B10-capture proxy")
     for ax in axes.flat:
         ax.set_xscale("log")
         ax.set_xlabel("Neutron histories / relative fluence")
@@ -1240,11 +1413,11 @@ def plot_q2_mixed_geometry_layout():
             for iz in range(16):
                 x = (ix - 7.5) * pitch_um
                 z = (iz - 7.5) * pitch_um
-                rows.append({"x_mm": -45.0 + x / 1000.0, "z_mm": 30.0 + z / 1000.0,
+                rows.append({"x_mm": x / 1000.0, "z_mm": z / 1000.0,
                              "cell_type": 1 if (ix + iz) % 2 == 0 else 0})
 
-    xs = [(r["x_mm"] + 45.0) * 1000.0 for r in rows]
-    zs = [(r["z_mm"] - 30.0) * 1000.0 for r in rows]
+    xs = [r["x_mm"] * 1000.0 for r in rows]
+    zs = [r["z_mm"] * 1000.0 for r in rows]
     colors = ["#c83f31" if r["cell_type"] == 1 else "#2f8f5f" for r in rows]
 
     fig, ax = plt.subplots(figsize=(6.8, 6.2))
@@ -1452,27 +1625,887 @@ def plot_q2_boron_distribution():
     plt.close()
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Plot Geant4 tumor-therapy assignment results.")
+    parser.add_argument(
+        "--section",
+        choices=("all", "q1", "q2", "q2new"),
+        default="all",
+        help="Generate all figures or only one assignment section.",
+    )
+    return parser.parse_args(argv)
+
+
+# =====================================================================
+# Q2 redesign: figures F2 (shell vs uniform main), F3' (single-cell
+# stacked dose distribution), F4 (equal-dose cross-therapy), F5 (B10
+# total scan). All consume output_q2A_/q2B_/q2C_*.root.
+# =====================================================================
+
+Q2A_UNIFORM_PPM_DEFAULT = 300000
+
+
+def q2a_paths(mode, ppm=Q2A_UNIFORM_PPM_DEFAULT, seeds=(1, 2, 3)):
+    """Return list of expected ROOT paths for experiment-A runs."""
+    return [PROJECT_DIR / f"output_q2A_{mode}_{ppm}ppm_seed{s}.root" for s in seeds]
+
+
+def aggregate_q2a_summary(mode, ppm=Q2A_UNIFORM_PPM_DEFAULT):
+    """Run cell_summary on each seed and collect per-class metrics across seeds.
+
+    Returns dict {tumor: {metric: [v1, v2, v3]}, normal: {...}, n_seeds: N,
+    a_li7_total: [N1, N2, N3]}. Missing seeds are skipped silently.
+    """
+    rows_per_seed = []
+    a_li7 = []
+    for path in q2a_paths(mode, ppm):
+        if not path.exists():
+            continue
+        rows = read_cell_rows(path)
+        evts = read_event_rows(path)
+        if not rows:
+            continue
+        rows_per_seed.append(cell_summary(rows))
+        a_li7.append(sum(e["n_alpha"] + e["n_li7"] for e in evts))
+    if not rows_per_seed:
+        return None
+    out = {"tumor": {}, "normal": {}, "n_seeds": len(rows_per_seed), "a_li7": a_li7}
+    keys = ("mean_dose_cell", "mean_dose_nucleus", "mean_dose_eq", "mean_S",
+            "lethal_fraction", "alpha_nuc_hits", "li_nuc_hits", "n_cells")
+    for cls in ("tumor", "normal"):
+        for k in keys:
+            out[cls][k] = [s[cls][k] for s in rows_per_seed]
+    return out
+
+
+def _bar_with_err(ax, x, values_per_group, colors, labels, ylabel, title=None):
+    """values_per_group is list of (mean, std) per group."""
+    means = [v[0] for v in values_per_group]
+    errs = [v[1] for v in values_per_group]
+    bars = ax.bar(x, means, yerr=errs, capsize=4, color=colors,
+                  edgecolor="#333", linewidth=0.6)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=12, ha="right")
+    ax.set_ylabel(ylabel)
+    ax.grid(axis="y", alpha=0.25)
+    if title:
+        ax.set_title(title, fontsize=10)
+    for bar, m in zip(bars, means):
+        if m > 0:
+            ax.text(bar.get_x() + bar.get_width()/2, m, f"{m:.2g}",
+                    ha="center", va="bottom", fontsize=8)
+
+
+def _mean_std(values):
+    n = len(values)
+    if n == 0:
+        return 0.0, 0.0
+    m = sum(values) / n
+    if n < 2:
+        return m, 0.0
+    var = sum((v - m) ** 2 for v in values) / (n - 1)
+    return m, math.sqrt(var)
+
+
+def plot_q2_shell_vs_uniform_main(ppm=Q2A_UNIFORM_PPM_DEFAULT):
+    """F2: 4-panel main result for hypothesis H1 (shell > uniform at equal total B10)."""
+    uniform = aggregate_q2a_summary("uniform", ppm)
+    shell = aggregate_q2a_summary("shell", ppm)
+    if uniform is None or shell is None:
+        print(f"[F2] missing q2A outputs at ppm={ppm}; skipping")
+        return
+    fig, axes = plt.subplots(1, 4, figsize=(15.5, 4.6))
+
+    # Panel (a): tumor / normal nucleus dose, grouped by mode.
+    groups = ["uniform\nT", "uniform\nN", "shell\nT", "shell\nN"]
+    colors = ["#c83f31", "#5fa8d3", "#7b3fbf", "#5fa8d3"]
+    vals = [
+        _mean_std(uniform["tumor"]["mean_dose_nucleus"]),
+        _mean_std(uniform["normal"]["mean_dose_nucleus"]),
+        _mean_std(shell["tumor"]["mean_dose_nucleus"]),
+        _mean_std(shell["normal"]["mean_dose_nucleus"]),
+    ]
+    _bar_with_err(axes[0], np.arange(4), vals, colors, groups,
+                  "Mean nucleus dose (Gy)", "(a) Nucleus dose")
+
+    # Panel (b): LQ survival fraction.
+    vals_S = [
+        _mean_std(uniform["tumor"]["mean_S"]),
+        _mean_std(uniform["normal"]["mean_S"]),
+        _mean_std(shell["tumor"]["mean_S"]),
+        _mean_std(shell["normal"]["mean_S"]),
+    ]
+    _bar_with_err(axes[1], np.arange(4), vals_S, colors, groups,
+                  "LQ survival S (cell mean)", "(b) Survival (LQ + RBE)")
+    axes[1].set_ylim(0, 1.05)
+
+    # Panel (c): lethal-hit fraction (geometric proxy).
+    vals_LH = [
+        _mean_std(uniform["tumor"]["lethal_fraction"]),
+        _mean_std(uniform["normal"]["lethal_fraction"]),
+        _mean_std(shell["tumor"]["lethal_fraction"]),
+        _mean_std(shell["normal"]["lethal_fraction"]),
+    ]
+    _bar_with_err(axes[2], np.arange(4), vals_LH, colors, groups,
+                  "Lethal-hit fraction\n(>=1 alpha or Li7 in nucleus)",
+                  "(c) Lethal-hit proxy")
+
+    # Panel (d): in-nucleus alpha+Li7 hit count totals.
+    vals_NH = [
+        _mean_std([a + b for a, b in zip(uniform["tumor"]["alpha_nuc_hits"], uniform["tumor"]["li_nuc_hits"])]),
+        _mean_std([a + b for a, b in zip(uniform["normal"]["alpha_nuc_hits"], uniform["normal"]["li_nuc_hits"])]),
+        _mean_std([a + b for a, b in zip(shell["tumor"]["alpha_nuc_hits"], shell["tumor"]["li_nuc_hits"])]),
+        _mean_std([a + b for a, b in zip(shell["normal"]["alpha_nuc_hits"], shell["normal"]["li_nuc_hits"])]),
+    ]
+    _bar_with_err(axes[3], np.arange(4), vals_NH, colors, groups,
+                  "Total alpha+Li7 nucleus hits",
+                  "(d) Reaction products in nucleus")
+
+    fig.suptitle(f"F2 Shell vs uniform B10 at equal total atom count "
+                 f"(uniform-equiv {ppm} ppm, {uniform['n_seeds']} seeds)",
+                 fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(FIG_DIR / "Q2_shell_vs_uniform_main.png", dpi=180)
+    plt.close(fig)
+
+
+def _stack_h2_across_seeds(mode, hist_name, ppm=Q2A_UNIFORM_PPM_DEFAULT):
+    """Sum cell-local H2 from all seeds of one experiment-A mode."""
+    grids = []
+    edges = None
+    for path in q2a_paths(mode, ppm):
+        if not path.exists():
+            continue
+        result = read_h2(path, hist_name)
+        if result is None:
+            continue
+        if edges is None:
+            edges = (result[0], result[1])
+        grids.append(np.array(result[2]))
+    if not grids:
+        return None
+    return edges[0], edges[1], np.sum(grids, axis=0)
+
+
+def _stack_h1_across_seeds(mode, hist_name, ppm=Q2A_UNIFORM_PPM_DEFAULT):
+    """Sum 1D cell-radial histograms across seeds. Returns (centers, totals)."""
+    counts = None
+    centers = None
+    for path in q2a_paths(mode, ppm):
+        if not path.exists():
+            continue
+        h = read_h1(path, hist_name)
+        if h is None:
+            continue
+        if counts is None:
+            centers = list(h[0])
+            counts = list(h[1])
+        else:
+            counts = [c + d for c, d in zip(counts, h[1])]
+    if counts is None:
+        return None
+    return centers, counts
+
+
+def plot_q2_singlecell_dose_distribution(ppm=Q2A_UNIFORM_PPM_DEFAULT):
+    """F3': stacked single-cell dose distribution.
+
+    Top row: 3 cell-local 2D edep maps (r_xy, z_local) — normal / tumor uniform / tumor shell.
+    Bottom row: 3 radial 1D dose density curves (Gy / um^3, 4*pi*r^2 jacobian removed).
+    """
+    # --- Gather data: stack tumor cell H2 from uniform vs shell q2A;
+    # use either's "normal" H2 (they should be equivalent — reaction-free).
+    h2_tumor_u = _stack_h2_across_seeds("uniform", "hCellLocalTumor", ppm)
+    h2_tumor_s = _stack_h2_across_seeds("shell",   "hCellLocalTumor", ppm)
+    h2_normal_u = _stack_h2_across_seeds("uniform", "hCellLocalNormal", ppm)
+    h2_normal_s = _stack_h2_across_seeds("shell",   "hCellLocalNormal", ppm)
+    if not all([h2_tumor_u, h2_tumor_s, h2_normal_u, h2_normal_s]):
+        print("[F3'] missing q2A H2 inputs; skipping")
+        return
+    # Combine normal cell maps from both modes (they share the no-boron condition).
+    x_edges, y_edges, _ = h2_normal_u
+    nx = len(x_edges) - 1
+    ny = len(y_edges) - 1
+    grid_normal = h2_normal_u[2] + h2_normal_s[2]
+    grid_tumor_u = h2_tumor_u[2]
+    grid_tumor_s = h2_tumor_s[2]
+
+    # Cells contributing per panel: 2048 normal × (uniform_seeds + shell_seeds),
+    # 2048 tumor × seeds for each tumor mode.
+    n_uniform = aggregate_q2a_summary("uniform", ppm)
+    n_shell = aggregate_q2a_summary("shell", ppm)
+    n_norm_cells = (sum(n_uniform["normal"]["n_cells"]) if n_uniform else 0) + \
+                   (sum(n_shell["normal"]["n_cells"]) if n_shell else 0)
+    n_tum_cells_u = sum(n_uniform["tumor"]["n_cells"]) if n_uniform else 0
+    n_tum_cells_s = sum(n_shell["tumor"]["n_cells"]) if n_shell else 0
+
+    # Convert MeV per (r_xy, z_local) bin into dose density Gy/um^3:
+    #   bin volume in 2D-cylindrical = 2*pi*r * dr * dz (we plot mean over cells,
+    #   so divide by n_cells too).
+    dr = x_edges[1] - x_edges[0]
+    dz = y_edges[1] - y_edges[0]
+    # Geant4 reports MeV; convert to Gy assuming water density 1 g/cm^3 -> mass = 1e-12 g per um^3
+    MEV_TO_J = 1.602e-13
+    G_PER_UM3 = 1.0e-12  # water density, 1 g/cm^3 = 1e-12 g/um^3
+    UM3_TO_KG = 1.0e-15  # 1 um^3 of water = 1e-12 g = 1e-15 kg
+    # dose [Gy] in a bin = edep_MeV * MEV_TO_J / (mass_kg_in_bin)
+    # mass_kg_in_bin = bin_volume_um3 * UM3_TO_KG
+    #
+    # We want average per-cell dose density: edep / n_cells / volume_um3 -> MeV/um^3
+    # then -> Gy: divide by mass per um^3 in kg = UM3_TO_KG; multiply by MEV_TO_J.
+
+    def to_dose_density(grid, n_cells):
+        if n_cells <= 0:
+            return None
+        out = np.zeros_like(grid, dtype=float)
+        for iy in range(ny):
+            for ix in range(nx):
+                r = 0.5 * (x_edges[ix] + x_edges[ix + 1])
+                # cylindrical shell volume per radial bin (μm^3): 2π r dr dz
+                if r <= 0:
+                    out[iy][ix] = 0.0
+                    continue
+                vol_um3 = 2.0 * math.pi * r * dr * dz
+                edep_per_cell_per_um3 = grid[iy][ix] / n_cells / vol_um3
+                # MeV/um^3 -> Gy
+                dose_gy = edep_per_cell_per_um3 * MEV_TO_J / UM3_TO_KG
+                out[iy][ix] = dose_gy
+        return out
+
+    map_normal = to_dose_density(grid_normal, n_norm_cells)
+    map_tumor_u = to_dose_density(grid_tumor_u, n_tum_cells_u)
+    map_tumor_s = to_dose_density(grid_tumor_s, n_tum_cells_s)
+    if any(m is None for m in (map_normal, map_tumor_u, map_tumor_s)):
+        print("[F3'] zero cell counts in one panel; skipping")
+        return
+
+    vmax = max(np.max(m) for m in (map_normal, map_tumor_u, map_tumor_s))
+    if vmax <= 0:
+        vmax = 1.0
+
+    # --- Bottom row: radial 1D dose density (per-cell average per um^3).
+    rad_normal_u = _stack_h1_across_seeds("uniform", "hCellRadialNormal", ppm)
+    rad_normal_s = _stack_h1_across_seeds("shell",   "hCellRadialNormal", ppm)
+    rad_tumor_u  = _stack_h1_across_seeds("uniform", "hCellRadialTumor",  ppm)
+    rad_tumor_s  = _stack_h1_across_seeds("shell",   "hCellRadialTumor",  ppm)
+    if not all([rad_normal_u, rad_normal_s, rad_tumor_u, rad_tumor_s]):
+        print("[F3'] radial H1 missing; skipping")
+        return
+    centers = rad_normal_u[0]
+    dr1d = centers[1] - centers[0]
+    rad_normal_counts = [a + b for a, b in zip(rad_normal_u[1], rad_normal_s[1])]
+
+    def radial_dose_density(counts, n_cells):
+        if n_cells <= 0:
+            return [0] * len(counts)
+        out = []
+        for r, c in zip(centers, counts):
+            if r <= 0:
+                out.append(0.0)
+                continue
+            shell_vol_um3 = 4.0 * math.pi * r * r * dr1d
+            edep_per_cell_per_um3 = c / n_cells / shell_vol_um3
+            dose_gy = edep_per_cell_per_um3 * MEV_TO_J / UM3_TO_KG
+            out.append(dose_gy)
+        return out
+
+    line_normal = radial_dose_density(rad_normal_counts, n_norm_cells)
+    line_tumor_u = radial_dose_density(rad_tumor_u[1], n_tum_cells_u)
+    line_tumor_s = radial_dose_density(rad_tumor_s[1], n_tum_cells_s)
+
+    # --- Plot.
+    fig, axes = plt.subplots(2, 3, figsize=(13.5, 8.0),
+                             gridspec_kw={"height_ratios": [1.05, 0.95], "hspace": 0.36})
+
+    titles = ["normal cell (no B10)",
+              f"tumor cell, uniform B10 ({ppm} ppm)",
+              "tumor cell, shell B10 (equal total)"]
+    panels = [map_normal, map_tumor_u, map_tumor_s]
+    for ax, panel, title in zip(axes[0], panels, titles):
+        im = ax.pcolormesh(x_edges, y_edges, panel,
+                           cmap="inferno", vmin=0, vmax=vmax)
+        ax.set_xlabel("r_xy (um)")
+        ax.set_ylabel("z_local (um)")
+        ax.set_title(title, fontsize=10.5)
+        ax.set_aspect("auto")
+        # 5 um cell radius circle (projection)
+        ax.axhline(0, color="white", linewidth=0.4, alpha=0.5)
+    cbar = fig.colorbar(im, ax=axes[0], orientation="vertical",
+                        shrink=0.85, pad=0.015)
+    cbar.set_label("Mean dose density (Gy / um^3)")
+
+    radial_panels = [(line_normal, "#5fa8d3", "normal"),
+                     (line_tumor_u, "#c83f31", "tumor uniform"),
+                     (line_tumor_s, "#7b3fbf", "tumor shell")]
+    for ax, (line, color, label) in zip(axes[1], radial_panels):
+        ax.plot(centers, line, color=color, linewidth=2.2, label=label)
+        ax.fill_between(centers, line, color=color, alpha=0.18)
+        ax.set_xlabel("r (um) from cell center")
+        ax.set_ylabel("Dose density (Gy / um^3)")
+        ax.set_xlim(0, 5)
+        ax.grid(alpha=0.25)
+        ax.set_title(label, fontsize=10.5)
+        # Mark r = 4 um (start of shell layer, cellRadius - 1 um shell)
+        ax.axvline(4.0, color="#888", linestyle="--", linewidth=0.9, alpha=0.6)
+        ax.text(4.05, ax.get_ylim()[1] * 0.95, "shell",
+                fontsize=8, color="#666", va="top", ha="left")
+    fig.suptitle("F3' Single-cell stacked dose distribution "
+                 f"(equal total B10, {n_uniform['n_seeds']} seeds, {ppm} ppm uniform-equiv)",
+                 fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(FIG_DIR / "Q2_singlecell_dose_distribution.png", dpi=180)
+    plt.close(fig)
+
+
+def plot_q2_therapy_equal_dose():
+    """F4: cross-therapy comparison at matched tumor-cell prescription dose.
+
+    Reads output_q2B_<group>_final.root for {gamma, proton, neutron_uniform, neutron_shell}.
+    """
+    groups = [
+        ("gamma", "gamma 1 MeV", "#2f6db3"),
+        ("proton", "proton 80 MeV", "#c83f31"),
+        ("neutron_uniform", "BNCT uniform", "#7b3fbf"),
+        ("neutron_shell", "BNCT shell", "#d38b2f"),
+    ]
+    summaries = []
+    for name, label, color in groups:
+        path = PROJECT_DIR / f"output_q2B_{name}_final.root"
+        if not path.exists():
+            print(f"[F4] missing {path.name}; skipping")
+            return
+        rows = read_cell_rows(path)
+        if not rows:
+            print(f"[F4] empty CellTree for {name}; skipping")
+            return
+        s = cell_summary(rows)
+        s["_label"] = label
+        s["_color"] = color
+        s["_name"] = name
+        summaries.append(s)
+
+    fig, axes = plt.subplots(1, 4, figsize=(15.5, 4.6))
+    x = np.arange(len(summaries))
+    labels = [s["_label"] for s in summaries]
+    colors = [s["_color"] for s in summaries]
+
+    # (a) tumor vs normal cell dose
+    width = 0.36
+    tumor_d = [s["tumor"]["mean_dose_cell"] for s in summaries]
+    normal_d = [s["normal"]["mean_dose_cell"] for s in summaries]
+    axes[0].bar(x - width/2, tumor_d, width, color=colors, label="tumor", edgecolor="#222")
+    axes[0].bar(x + width/2, normal_d, width, color=colors, alpha=0.45, hatch="//",
+                label="normal", edgecolor="#222")
+    axes[0].set_xticks(x); axes[0].set_xticklabels(labels, rotation=15, ha="right")
+    axes[0].set_ylabel("Mean cell dose (Gy)")
+    axes[0].set_title("(a) Tumor vs normal cell dose")
+    axes[0].grid(axis="y", alpha=0.25)
+    axes[0].legend(fontsize=9)
+
+    # (b) LQ survival per group, normal cells only — the safety axis.
+    s_normal = [s["normal"]["mean_S"] for s in summaries]
+    axes[1].bar(x, s_normal, color=colors, edgecolor="#222")
+    axes[1].set_xticks(x); axes[1].set_xticklabels(labels, rotation=15, ha="right")
+    axes[1].set_ylabel("Normal cell mean S")
+    axes[1].set_ylim(0, 1.05)
+    axes[1].set_title("(b) Normal cell survival (higher = safer)")
+    axes[1].grid(axis="y", alpha=0.25)
+    for xi, v in zip(x, s_normal):
+        axes[1].text(xi, v, f"{v:.3f}", ha="center", va="bottom", fontsize=9)
+
+    # (c) Therapeutic index = K_tumor / K_normal where K = 1 - S
+    ti = []
+    for s in summaries:
+        kT = 1.0 - s["tumor"]["mean_S"]
+        kN = 1.0 - s["normal"]["mean_S"]
+        ti.append(kT / kN if kN > 1e-9 else float("inf") if kT > 0 else 0.0)
+    finite = [v for v in ti if math.isfinite(v)]
+    axes[2].bar(x, [v if math.isfinite(v) else (max(finite) * 1.5 if finite else 1) for v in ti],
+                color=colors, edgecolor="#222")
+    axes[2].set_xticks(x); axes[2].set_xticklabels(labels, rotation=15, ha="right")
+    axes[2].set_ylabel("K_tumor / K_normal (TI)")
+    axes[2].set_title("(c) Therapeutic index")
+    axes[2].grid(axis="y", alpha=0.25)
+    for xi, v in zip(x, ti):
+        txt = "inf" if not math.isfinite(v) else f"{v:.1f}"
+        axes[2].text(xi, axes[2].get_ylim()[1]*0.95, txt, ha="center", fontsize=8.5,
+                     va="top", color="#222")
+
+    # (d) tumor-cell nucleus dose CDF
+    for s in summaries:
+        rows = []
+        for path in [PROJECT_DIR / f"output_q2B_{s['_name']}_final.root"]:
+            rows.extend(read_cell_rows(path))
+        nuc_doses = sorted(r["dose_nucleus"] for r in rows if r["cell_type"] == 1)
+        if nuc_doses:
+            cdf = np.arange(1, len(nuc_doses) + 1) / len(nuc_doses)
+            axes[3].plot(nuc_doses, cdf, color=s["_color"], label=s["_label"], linewidth=2)
+    axes[3].set_xlabel("tumor nucleus dose (Gy)")
+    axes[3].set_ylabel("CDF")
+    axes[3].set_xscale("symlog", linthresh=1e-3)
+    axes[3].set_title("(d) Tumor nucleus dose CDF")
+    axes[3].grid(alpha=0.25)
+    axes[3].legend(fontsize=9, loc="lower right")
+
+    fig.suptitle("F4 Cross-therapy comparison at matched tumor-cell dose (~2 Gy)",
+                 fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(FIG_DIR / "Q2_therapy_equal_dose.png", dpi=180)
+    plt.close(fig)
+
+
+Q2C_PPM_LIST = [30000, 100000, 200000, 300000]
+
+
+def plot_q2_b10_total_scan():
+    """F5: B10 total scan (uniform-equiv ppm) — uniform vs shell at equal total atoms."""
+    points_u = []
+    points_s = []
+    for ppm in Q2C_PPM_LIST:
+        for mode, bucket in (("uniform", points_u), ("shell", points_s)):
+            path = PROJECT_DIR / f"output_q2C_{mode}_{ppm}ppm.root"
+            if not path.exists():
+                continue
+            rows = read_cell_rows(path)
+            evts = read_event_rows(path)
+            if not rows:
+                continue
+            s = cell_summary(rows)
+            bucket.append({
+                "ppm": ppm,
+                "tumor_nuc": s["tumor"]["mean_dose_nucleus"],
+                "normal_nuc": s["normal"]["mean_dose_nucleus"],
+                "tumor_S": s["tumor"]["mean_S"],
+                "normal_S": s["normal"]["mean_S"],
+                "lethal_t": s["tumor"]["lethal_fraction"],
+                "lethal_n": s["normal"]["lethal_fraction"],
+                "a_li7": sum(e["n_alpha"] + e["n_li7"] for e in evts),
+            })
+    if not points_u or not points_s:
+        print("[F5] missing q2C outputs; skipping")
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.6))
+
+    # (a) tumor nucleus dose vs ppm, uniform vs shell
+    axes[0].plot([p["ppm"] for p in points_u], [p["tumor_nuc"] for p in points_u],
+                 "o-", color="#c83f31", label="uniform")
+    axes[0].plot([p["ppm"] for p in points_s], [p["tumor_nuc"] for p in points_s],
+                 "s-", color="#7b3fbf", label="shell (equal total)")
+    axes[0].set_xscale("log"); axes[0].set_yscale("log")
+    axes[0].set_xlabel("uniform-equiv B10 ppm")
+    axes[0].set_ylabel("Tumor nucleus dose (Gy)")
+    axes[0].set_title("(a) Tumor nucleus dose")
+    axes[0].grid(alpha=0.25, which="both")
+    axes[0].legend(fontsize=9)
+
+    # (b) shell/uniform advantage ratio
+    common = sorted(set(p["ppm"] for p in points_u) & set(p["ppm"] for p in points_s))
+    rate = []
+    for ppm in common:
+        u = next(p for p in points_u if p["ppm"] == ppm)
+        s = next(p for p in points_s if p["ppm"] == ppm)
+        rate.append(s["tumor_nuc"] / u["tumor_nuc"] if u["tumor_nuc"] > 0 else 0)
+    axes[1].plot(common, rate, "o-", color="#222", markersize=8)
+    axes[1].axhline(1.0, color="#888", linestyle="--", linewidth=0.8)
+    axes[1].set_xscale("log")
+    axes[1].set_xlabel("uniform-equiv B10 ppm")
+    axes[1].set_ylabel("D_nuc(shell) / D_nuc(uniform)")
+    axes[1].set_title("(b) Shell / uniform advantage ratio")
+    axes[1].grid(alpha=0.25, which="both")
+
+    # (c) Survival vs ppm
+    axes[2].plot([p["ppm"] for p in points_u], [p["tumor_S"] for p in points_u],
+                 "o-", color="#c83f31", label="uniform tumor S")
+    axes[2].plot([p["ppm"] for p in points_s], [p["tumor_S"] for p in points_s],
+                 "s-", color="#7b3fbf", label="shell tumor S")
+    axes[2].plot([p["ppm"] for p in points_u], [p["normal_S"] for p in points_u],
+                 "o--", color="#5fa8d3", label="uniform normal S", alpha=0.7)
+    axes[2].plot([p["ppm"] for p in points_s], [p["normal_S"] for p in points_s],
+                 "s--", color="#5fa8d3", label="shell normal S", alpha=0.5)
+    axes[2].set_xscale("log")
+    axes[2].set_xlabel("uniform-equiv B10 ppm")
+    axes[2].set_ylabel("LQ survival fraction S")
+    axes[2].set_ylim(0, 1.05)
+    axes[2].set_title("(c) Survival vs B10 total")
+    axes[2].grid(alpha=0.25, which="both")
+    axes[2].legend(fontsize=8)
+
+    fig.suptitle("F5 B10 total scan (equal total atom count between uniform/shell)", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(FIG_DIR / "Q2_b10_total_scan.png", dpi=180)
+    plt.close(fig)
+
+
+# === Q2 two-stage BNCT: real-neutron capture yield x conditional response ===
+
+def q2d_capture_paths(mode, seeds=(1, 2, 3)):
+    return [PROJECT_DIR / f"output_q2D_capture_{mode}_seed{s}.root" for s in seeds]
+
+
+def forced_capture_seed_summary(path):
+    run = read_run_row(path)
+    if run.get("source_mode") != 1:
+        raise ValueError(f"{path.name} is not a b10Capture output")
+    if ROOT is None:
+        return None
+    frame = ROOT.RDataFrame("EventTree", str(path))
+    n = int(frame.Count().GetValue())
+    if n <= 0:
+        return None
+    highlet_frame = frame.Define(
+        "forcedHighLETNucleus_MeV",
+        "edepNucleusTumorAlpha_MeV + edepNucleusTumorLi7_MeV",
+    )
+    highlet_sum = float(highlet_frame.Sum("forcedHighLETNucleus_MeV").GetValue())
+    initial_sum = float(frame.Sum("forcedInitialHighLET_MeV").GetValue())
+    hit_count = int(highlet_frame.Filter("forcedHighLETNucleus_MeV > 0").Count().GetValue())
+    rows = read_cell_rows(path)
+    tumor_rows = [row for row in rows if row["cell_type"] == 1]
+    highlet_doses = []
+    for row in tumor_rows:
+        total_edep = row.get("edepNucleus_MeV", 0.0)
+        highlet_edep = row.get("edepNucleusAlpha_MeV", 0.0) + row.get("edepNucleusLi7_MeV", 0.0)
+        highlet_doses.append(
+            row["dose_nucleus"] * highlet_edep / total_edep if total_edep > 0 else 0.0
+        )
+    return {
+        "n_captures": n,
+        "mean_nucleus_highlet_mev": highlet_sum / n,
+        "nucleus_hit_probability": hit_count / n,
+        "nucleus_energy_fraction": highlet_sum / initial_sum if initial_sum > 0 else 0.0,
+        "population_nucleus_dose_gy_per_capture": mean(highlet_doses) / n,
+    }
+
+
+def aggregate_q2d_capture_summary(mode):
+    summaries = []
+    for path in q2d_capture_paths(mode):
+        if path.exists():
+            summary = forced_capture_seed_summary(path)
+            if summary:
+                summaries.append(summary)
+    return summaries
+
+
+def _seed_metric(summaries, key):
+    return [s[key] for s in summaries]
+
+
+def plot_q2_forced_capture_main():
+    """F2: conditional microdosimetry response per B10 capture."""
+    uniform = aggregate_q2d_capture_summary("uniform")
+    shell = aggregate_q2d_capture_summary("shell")
+    if not uniform or not shell:
+        print("[F2 two-stage] missing q2D forced-capture outputs; skipping")
+        return
+
+    metrics = [
+        ("mean_nucleus_highlet_mev", "Nucleus high-LET edep\n(MeV / capture)"),
+        ("nucleus_hit_probability", "Nucleus high-LET hit\nprobability / capture"),
+        ("nucleus_energy_fraction", "Initial high-LET energy\nfraction entering nucleus"),
+    ]
+    colors = ["#c83f31", "#7b3fbf"]
+    fig, axes = plt.subplots(1, 4, figsize=(15.5, 4.6))
+    ratios = []
+    ratio_errs = []
+    ratio_labels = []
+    for ax, (key, ylabel) in zip(axes[:3], metrics):
+        u = _seed_metric(uniform, key)
+        s = _seed_metric(shell, key)
+        values = [_mean_std(u), _mean_std(s)]
+        _bar_with_err(ax, np.arange(2), values, colors, ["uniform", "shell"],
+                      ylabel, None)
+        paired = [sv / uv for uv, sv in zip(u, s) if uv > 0]
+        ratio, ratio_err = _mean_std(paired)
+        ratios.append(ratio)
+        ratio_errs.append(ratio_err)
+        ratio_labels.append(ylabel.split("\n")[0])
+
+    axes[0].set_title("(a) Nucleus energy per capture")
+    axes[1].set_title("(b) Nucleus-hit probability")
+    axes[2].set_title("(c) Energy-transfer efficiency")
+    axes[3].bar(np.arange(3), ratios, yerr=ratio_errs, capsize=4,
+                color="#333", edgecolor="#111")
+    axes[3].axhline(1.0, color="#888", linestyle="--", linewidth=1)
+    axes[3].set_xticks(np.arange(3))
+    axes[3].set_xticklabels(ratio_labels, rotation=15, ha="right")
+    axes[3].set_ylabel("shell / uniform")
+    axes[3].set_title("(d) Conditional-response ratio")
+    axes[3].grid(axis="y", alpha=0.25)
+    fig.suptitle("F2 Conditional microdosimetry per B10 capture "
+                 f"({min(len(uniform), len(shell))} seeds)", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(FIG_DIR / "Q2_forced_capture_main.png", dpi=180)
+    plt.close(fig)
+
+
+def _stack_q2d_hist(mode, hist_name, reader):
+    total = None
+    axes = None
+    captures = 0
+    for path in q2d_capture_paths(mode):
+        if not path.exists():
+            continue
+        run = read_run_row(path)
+        if run.get("source_mode") != 1:
+            raise ValueError(f"{path.name} is not a b10Capture output")
+        result = reader(path, hist_name)
+        if result is None:
+            continue
+        captures += run["n_events"]
+        if reader is read_h2:
+            axes = (result[0], result[1])
+            values = np.array(result[2], dtype=float)
+        else:
+            axes = result[0]
+            values = np.array(result[1], dtype=float)
+        total = values if total is None else total + values
+    if total is None or captures <= 0:
+        return None
+    return axes, total / captures
+
+
+def cylindrical_bin_volumes(r_edges, z_edges):
+    """Exact cylindrical-ring volume for each (r_xy, z) H2 bin, in um^3."""
+    ring_areas = math.pi * (np.square(r_edges[1:]) - np.square(r_edges[:-1]))
+    dz = np.diff(z_edges)
+    return np.outer(dz, ring_areas)
+
+
+def spherical_shell_volumes(centers):
+    """Exact spherical-shell volume inferred from uniform H1 bin centers, in um^3."""
+    centers = np.asarray(centers, dtype=float)
+    dr = centers[1] - centers[0]
+    inner = np.maximum(0.0, centers - 0.5 * dr)
+    outer = centers + 0.5 * dr
+    return 4.0 * math.pi * (np.power(outer, 3) - np.power(inner, 3)) / 3.0
+
+
+def forced_capture_region_energy(map_result):
+    """Integrate raw per-capture H2 energy into nucleus/cytoplasm/outer-shell regions."""
+    (r_edges, z_edges), energy = map_result
+    r_centers = 0.5 * (np.asarray(r_edges[:-1]) + np.asarray(r_edges[1:]))
+    z_centers = 0.5 * (np.asarray(z_edges[:-1]) + np.asarray(z_edges[1:]))
+    rr, zz = np.meshgrid(r_centers, z_centers)
+    radius = np.sqrt(rr * rr + zz * zz)
+    return [
+        float(np.sum(energy[radius < 2.5])),
+        float(np.sum(energy[(radius >= 2.5) & (radius < 4.0)])),
+        float(np.sum(energy[(radius >= 4.0) & (radius <= 5.0)])),
+    ]
+
+
+def plot_q2_forced_capture_microdose():
+    """F3': volume-normalized high-LET density and regional energy balance."""
+    map_u = _stack_q2d_hist("uniform", "hCellLocalTumor", read_h2)
+    map_s = _stack_q2d_hist("shell", "hCellLocalTumor", read_h2)
+    rad_u = _stack_q2d_hist("uniform", "hCellRadialTumor", read_h1)
+    rad_s = _stack_q2d_hist("shell", "hCellRadialTumor", read_h1)
+    if not all((map_u, map_s, rad_u, rad_s)):
+        print("[F3 two-stage] missing q2D histograms; skipping")
+        return
+
+    x_edges, y_edges = map_u[0]
+    bin_volumes = cylindrical_bin_volumes(np.asarray(x_edges), np.asarray(y_edges))
+    density_u = np.divide(map_u[1], bin_volumes, out=np.zeros_like(map_u[1]), where=bin_volumes > 0)
+    density_s = np.divide(map_s[1], bin_volumes, out=np.zeros_like(map_s[1]), where=bin_volumes > 0)
+    radial_density_u = np.divide(rad_u[1], spherical_shell_volumes(rad_u[0]))
+    radial_density_s = np.divide(rad_s[1], spherical_shell_volumes(rad_s[0]))
+    region_u = forced_capture_region_energy(map_u)
+    region_s = forced_capture_region_energy(map_s)
+
+    vmax = max(float(np.max(density_u)), float(np.max(density_s)))
+    positive = np.concatenate((density_u[density_u > 0], density_s[density_s > 0]))
+    vmin = max(float(np.min(positive)), vmax * 1.0e-4)
+    density_norm = LogNorm(vmin=vmin, vmax=vmax)
+    fig = plt.figure(figsize=(13.5, 9.0))
+    grid = fig.add_gridspec(2, 2, hspace=0.32, wspace=0.28)
+    map_axes = [fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1])]
+    for ax, panel, title in zip(map_axes, (density_u, density_s),
+                                ("uniform B10", "shell B10")):
+        im = ax.pcolormesh(x_edges, y_edges, panel, cmap="inferno", norm=density_norm)
+        ax.set_xlabel("r_xy (um)")
+        ax.set_ylabel("z_local (um)")
+        ax.set_title(title)
+    cbar = fig.colorbar(im, ax=map_axes, shrink=0.85, pad=0.02)
+    cbar.set_label("High-LET energy density (MeV / capture / um^3, log scale)")
+
+    ax = fig.add_subplot(grid[1, 0])
+    ax.plot(rad_u[0], radial_density_u, color="#c83f31", linewidth=2, label="uniform")
+    ax.plot(rad_s[0], radial_density_s, color="#7b3fbf", linewidth=2, label="shell")
+    ax.axvline(2.5, color="#4c78a8", linestyle="--", label="nucleus boundary")
+    ax.axvline(4.0, color="#888", linestyle=":", label="shell start")
+    ax.set_xlabel("r from cell center (um)")
+    ax.set_ylabel("High-LET energy density\n(MeV / capture / um^3)")
+    ax.set_title("Volume-normalized radial response")
+    ax.grid(alpha=0.25)
+    ax.legend(fontsize=8)
+
+    ax = fig.add_subplot(grid[1, 1])
+    x = np.arange(3)
+    width = 0.36
+    ax.bar(x - width / 2, region_u, width, color="#c83f31", label="uniform")
+    ax.bar(x + width / 2, region_s, width, color="#7b3fbf", label="shell")
+    ax.set_xticks(x)
+    ax.set_xticklabels(["nucleus\nr < 2.5", "cytoplasm\n2.5 <= r < 4", "outer shell\n4 <= r <= 5"])
+    ax.set_ylabel("High-LET edep (MeV / capture)")
+    ax.set_title("Regional energy balance")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend()
+
+    fig.suptitle("F3' Volume-corrected conditional high-LET microdosimetry", fontsize=12)
+    fig.savefig(FIG_DIR / "Q2_forced_capture_microdose.png", dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def fit_capture_yield_per_ppm(mode, scan_points):
+    """Poisson MLE for capture_yield = slope * uniform-equiv ppm.
+
+    The fit pools sparse q2C points and the three 300k-ppm q2A neutron runs.
+    """
+    total_captures = sum(p["captures"] for p in scan_points)
+    exposure = sum(p["ppm"] * p["n_events"] for p in scan_points)
+    for path in q2a_paths(mode):
+        if not path.exists() or ROOT is None:
+            continue
+        frame = ROOT.RDataFrame("EventTree", str(path))
+        n_events = int(frame.Count().GetValue())
+        total_captures += int(frame.Sum("nLi7").GetValue())
+        exposure += Q2A_UNIFORM_PPM_DEFAULT * n_events
+    if exposure <= 0 or total_captures <= 0:
+        return 0.0, 0.0, total_captures
+    slope = total_captures / exposure
+    slope_std = math.sqrt(total_captures) / exposure
+    return slope, slope_std, total_captures
+
+
+def plot_q2_two_stage_b10_scan():
+    """F5: real-neutron capture yield multiplied by conditional nucleus response."""
+    forced = {}
+    for mode in ("uniform", "shell"):
+        summaries = aggregate_q2d_capture_summary(mode)
+        if not summaries:
+            print("[F5 two-stage] missing q2D outputs; skipping")
+            return
+        forced[mode] = _mean_std(_seed_metric(summaries, "population_nucleus_dose_gy_per_capture"))
+
+    points = {"uniform": [], "shell": []}
+    for ppm in Q2C_PPM_LIST:
+        for mode in ("uniform", "shell"):
+            path = PROJECT_DIR / f"output_q2C_{mode}_{ppm}ppm.root"
+            if not path.exists() or ROOT is None:
+                continue
+            frame = ROOT.RDataFrame("EventTree", str(path))
+            n_events = int(frame.Count().GetValue())
+            if n_events <= 0:
+                continue
+            captures = int(frame.Sum("nLi7").GetValue())
+            capture_yield = captures / n_events
+            response, response_std = forced[mode]
+            points[mode].append({
+                "ppm": ppm,
+                "captures": captures,
+                "n_events": n_events,
+                "yield": capture_yield,
+            })
+            if captures < 100:
+                print(f"[F5 two-stage] warning: {mode} {ppm} ppm has only {captures} Li7 captures")
+    if any(not points[m] for m in points):
+        print("[F5 two-stage] missing q2C capture-yield inputs; skipping")
+        return
+
+    fits = {}
+    for mode in ("uniform", "shell"):
+        slope, slope_std, pooled_captures = fit_capture_yield_per_ppm(mode, points[mode])
+        fits[mode] = (slope, slope_std)
+        response, response_std = forced[mode]
+        for point in points[mode]:
+            fitted_yield = slope * point["ppm"]
+            fitted_yield_std = slope_std * point["ppm"]
+            point["fitted_yield"] = fitted_yield
+            point["predicted"] = fitted_yield * response
+            rel_yield = fitted_yield_std / fitted_yield if fitted_yield > 0 else 0.0
+            rel_response = response_std / response if response > 0 else 0.0
+            point["predicted_err"] = point["predicted"] * math.sqrt(
+                rel_yield * rel_yield + rel_response * rel_response
+            )
+        print(f"[F5 two-stage] {mode} pooled real-neutron Li7 captures: {pooled_captures}")
+
+    fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.6))
+    styles = {"uniform": ("o-", "#c83f31"), "shell": ("s-", "#7b3fbf")}
+    for mode in ("uniform", "shell"):
+        style, color = styles[mode]
+        xs = [p["ppm"] for p in points[mode]]
+        axes[0].errorbar(xs, [p["predicted"] for p in points[mode]],
+                         yerr=[p["predicted_err"] for p in points[mode]],
+                         fmt=style, color=color, capsize=3, label=mode)
+        positive = [p for p in points[mode] if p["yield"] > 0]
+        axes[2].scatter([p["ppm"] for p in positive], [p["yield"] for p in positive],
+                        color=color, marker=style[0], alpha=0.55, label=f"{mode} raw")
+        axes[2].plot(xs, [p["fitted_yield"] for p in points[mode]], "-",
+                     color=color, label=f"{mode} pooled fit")
+    axes[0].set_xscale("log"); axes[0].set_yscale("log")
+    axes[0].set_xlabel("uniform-equiv B10 ppm")
+    axes[0].set_ylabel("Predicted tumor nucleus dose\n(Gy / incident neutron)")
+    axes[0].set_title("(a) Two-stage nucleus dose")
+    axes[0].legend()
+
+    common = sorted(set(p["ppm"] for p in points["uniform"]) &
+                    set(p["ppm"] for p in points["shell"]))
+    ratios = []
+    for ppm in common:
+        u = next(p for p in points["uniform"] if p["ppm"] == ppm)["predicted"]
+        s = next(p for p in points["shell"] if p["ppm"] == ppm)["predicted"]
+        ratios.append(s / u if u > 0 else float("nan"))
+    axes[1].plot(common, ratios, "o-", color="#222")
+    axes[1].axhline(1.0, color="#888", linestyle="--")
+    axes[1].set_xscale("log")
+    axes[1].set_xlabel("uniform-equiv B10 ppm")
+    axes[1].set_ylabel("shell / uniform predicted dose")
+    axes[1].set_title("(b) Two-stage response ratio")
+
+    axes[2].set_xscale("log"); axes[2].set_yscale("log")
+    axes[2].set_xlabel("uniform-equiv B10 ppm")
+    axes[2].set_ylabel("Li7 captures / incident neutron")
+    axes[2].set_title("(c) Real-neutron capture yield + pooled fit")
+    axes[2].legend()
+    for ax in axes:
+        ax.grid(alpha=0.25, which="both")
+    fig.suptitle("F5 Two-stage BNCT: real capture yield x conditional microdosimetry", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(FIG_DIR / "Q2_two_stage_b10_scan.png", dpi=180)
+    plt.close(fig)
+
+
 def main():
+    args = parse_args()
     require_root_when_outputs_exist()
-    plot_q1_depth_dose()
-    plot_q1_dose_heatmap()
-    plot_q1_proton_energy_heatmap_grid()
-    plot_q1_gamma_energy_heatmap_grid()
-    plot_q1_proton_energy_scan()
-    plot_q1_gamma_energy_scan()
-    plot_q1_region_dose()
-    plot_q1_let_spectra()
-    plot_q2_boron_cell_model()
-    plot_q2_mixed_geometry_layout()
-    plot_q2_micro_dose_map()
-    plot_q2_nucleus_dose_scatter()
-    plot_q2_secondary_yield()
-    plot_q2_cell_dose_spectra()
-    plot_q2_therapy_comparison_projected_maps()
-    plot_q2_b10_concentration_scan()
-    plot_q2_neutron_fluence_scan()
-    plot_q2_neutron_fluence_projected_maps()
-    plot_q2_boron_distribution()
+    if args.section in ("all", "q1"):
+        plot_q1_depth_dose()
+        plot_q1_dose_heatmap()
+        plot_q1_proton_energy_heatmap_grid()
+        plot_q1_gamma_energy_heatmap_grid()
+        plot_q1_proton_energy_scan()
+        plot_q1_gamma_energy_scan()
+        plot_q1_region_dose()
+        plot_q1_let_spectra()
+    if args.section in ("all", "q2"):
+        plot_q2_boron_cell_model()
+        plot_q2_mixed_geometry_layout()
+        plot_q2_micro_dose_map()
+        plot_q2_nucleus_dose_scatter()
+        plot_q2_secondary_yield()
+        plot_q2_cell_dose_spectra()
+        plot_q2_therapy_comparison_projected_maps()
+        plot_q2_b10_concentration_scan()
+        plot_q2_neutron_fluence_scan()
+        plot_q2_neutron_fluence_projected_maps()
+        plot_q2_boron_distribution()
+    if args.section in ("all", "q2", "q2new"):
+        plot_q2_forced_capture_main()
+        plot_q2_forced_capture_microdose()
+        plot_q2_two_stage_b10_scan()
 
 
 if __name__ == "__main__":

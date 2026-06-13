@@ -17,6 +17,7 @@ public:
 private:
   G4bool TouchableContains(const G4VTouchable* touchable, const G4String& token) const;
   G4int ExtractCellID(const G4VTouchable* touchable) const;
+  G4int FindCellDepth(const G4VTouchable* touchable) const;
 };
 
 #endif

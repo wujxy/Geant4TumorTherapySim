@@ -15,6 +15,7 @@ constexpr G4int kRunTree = 0;
 constexpr G4int kEventTree = 1;
 constexpr G4int kCellTree = 2;
 constexpr G4int kStepTree = 3;
+constexpr G4double kCellLocalSamplingStep = 0.1 * micrometer;
 
 G4int CellTypeCode(CellType type)
 {
@@ -32,10 +33,25 @@ void EventAccumulator::Reset()
   edepNucleusTumor = 0.;
   edepNucleusNormal = 0.;
   edepBoronRegion = 0.;
+  edepNucleusTumorGamma = 0.;
+  edepNucleusTumorProton = 0.;
+  edepNucleusTumorAlpha = 0.;
+  edepNucleusTumorLi7 = 0.;
+  edepNucleusNormalGamma = 0.;
+  edepNucleusNormalProton = 0.;
+  edepNucleusNormalAlpha = 0.;
+  edepNucleusNormalLi7 = 0.;
   nAlpha = 0;
   nLi7 = 0;
   nGamma = 0;
   nElectron = 0;
+  nAlphaWeighted = 0.;
+  nLi7Weighted = 0.;
+  nGammaWeighted = 0.;
+  nElectronWeighted = 0.;
+  forcedCaptureBranch = -1;
+  forcedCaptureRadius = 0.;
+  forcedInitialHighLET = 0.;
 }
 
 TherapyAnalysisManager& TherapyAnalysisManager::Instance()
@@ -48,6 +64,13 @@ G4double TherapyAnalysisManager::DoseGy(G4double edep, G4double mass) const
 {
   if (mass <= 0.) return 0.;
   return (edep / mass) / gray;
+}
+
+G4ThreeVector TherapyAnalysisManager::GetCellCenter(G4int cellID) const
+{
+  auto it = fCells.find(cellID);
+  if (it == fCells.end()) return G4ThreeVector();
+  return it->second.info.position;
 }
 
 void TherapyAnalysisManager::BeginRun(G4int nEvents, const std::vector<CellInfo>& cells)
@@ -71,17 +94,15 @@ void TherapyAnalysisManager::BeginRun(G4int nEvents, const std::vector<CellInfo>
   const G4double torsoVolume = (260. * mm) * (120. * mm) * (500. * mm);
   const G4double neckRadius = 50. * mm;
   const G4double headRadius = 90. * mm;
-  const G4double headCenterZ = 430. * mm;
-  const G4double neckBottomZ = 250. * mm;
-  const G4double headNeckIntersectionOffset = std::sqrt(headRadius * headRadius - neckRadius * neckRadius);
-  const G4double neckTopZ = headCenterZ - headNeckIntersectionOffset;
-  const G4double neckVolume = CLHEP::pi * neckRadius * neckRadius * (neckTopZ - neckBottomZ);
+  const G4double neckEnvelopeHeight = 180. * mm;
+  const G4double neckHeadOverlapVolume =
+    2. * CLHEP::pi / 3. *
+    (std::pow(headRadius, 3) - std::pow(headRadius * headRadius - neckRadius * neckRadius, 1.5));
+  const G4double neckVolume =
+    CLHEP::pi * neckRadius * neckRadius * neckEnvelopeHeight - neckHeadOverlapVolume;
   const G4double headVolume = 4. * CLHEP::pi * headRadius * headRadius * headRadius / 3.;
-  const G4double headNeckCapHeight = headRadius - headNeckIntersectionOffset;
-  const G4double headNeckCutVolume =
-    CLHEP::pi * headNeckCapHeight * headNeckCapHeight * (headRadius - headNeckCapHeight / 3.);
   const G4double legVolume = 2. * CLHEP::pi * (55. * mm) * (55. * mm) * (820. * mm);
-  const G4double phantomVolume = torsoVolume + neckVolume + (headVolume - headNeckCutVolume) + legVolume;
+  const G4double phantomVolume = torsoVolume + neckVolume + headVolume + legVolume;
   fNormalRegionMass = density * std::max(0., phantomVolume - tumorSize.x() * tumorSize.y() * tumorSize.z());
 
   CreateObjects(config.GetSaveStepTree());
@@ -97,6 +118,7 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   analysis->CreateNtuple("RunTree", "Run configuration");
   analysis->CreateNtupleIColumn("mode");
   analysis->CreateNtupleIColumn("boronMode");
+  analysis->CreateNtupleIColumn("sourceMode");
   analysis->CreateNtupleIColumn("nEvents");
   analysis->CreateNtupleIColumn("nCells");
   analysis->CreateNtupleDColumn("tumorSizeX_mm");
@@ -105,6 +127,7 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   analysis->CreateNtupleDColumn("cellDiameter_um");
   analysis->CreateNtupleDColumn("cellPitch_um");
   analysis->CreateNtupleDColumn("boronPPM");
+  analysis->CreateNtupleDColumn("b10CaptureBias");
   analysis->CreateNtupleDColumn("killDoseThreshold_Gy");
   analysis->FinishNtuple();
 
@@ -124,6 +147,21 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   analysis->CreateNtupleIColumn("nLi7");
   analysis->CreateNtupleIColumn("nGamma");
   analysis->CreateNtupleIColumn("nElectron");
+  analysis->CreateNtupleDColumn("nAlphaWeighted");
+  analysis->CreateNtupleDColumn("nLi7Weighted");
+  analysis->CreateNtupleDColumn("nGammaWeighted");
+  analysis->CreateNtupleDColumn("nElectronWeighted");
+  analysis->CreateNtupleDColumn("edepNucleusTumorGamma_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusTumorProton_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusTumorAlpha_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusTumorLi7_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusNormalGamma_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusNormalProton_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusNormalAlpha_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusNormalLi7_MeV");
+  analysis->CreateNtupleIColumn("forcedCaptureBranch");
+  analysis->CreateNtupleDColumn("forcedCaptureRadius_um");
+  analysis->CreateNtupleDColumn("forcedInitialHighLET_MeV");
   analysis->FinishNtuple();
 
   analysis->CreateNtuple("CellTree", "Accumulated cell scoring");
@@ -142,6 +180,12 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   analysis->CreateNtupleIColumn("alphaHits");
   analysis->CreateNtupleIColumn("liHits");
   analysis->CreateNtupleIColumn("killedFlag");
+  analysis->CreateNtupleDColumn("edepNucleusGamma_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusProton_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusAlpha_MeV");
+  analysis->CreateNtupleDColumn("edepNucleusLi7_MeV");
+  analysis->CreateNtupleIColumn("alphaNucleusHits");
+  analysis->CreateNtupleIColumn("liNucleusHits");
   analysis->FinishNtuple();
 
   if (saveStepTree) {
@@ -155,6 +199,7 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
     analysis->CreateNtupleDColumn("edep_MeV");
     analysis->CreateNtupleDColumn("stepLength_um");
     analysis->CreateNtupleDColumn("LET_MeV_per_um");
+    analysis->CreateNtupleDColumn("weight");
     analysis->FinishNtuple();
   }
 
@@ -166,10 +211,22 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   analysis->CreateH1("hDoseNucleusNormal", "Normal nucleus dose;Dose (Gy);Cells", 100, 0., 20.);
   analysis->CreateH1("hLETTumor", "Tumor LET;LET (MeV/um);Steps", 200, 0., 2.);
   analysis->CreateH1("hLETNormal", "Normal LET;LET (MeV/um);Steps", 200, 0., 2.);
-  analysis->CreateH1("hDepthDose", "Depth-dose profile;y (mm);Energy deposit (MeV)", 200, -200., 200.);
+  analysis->CreateH1("hDepthDose", "Depth dose;Depth y (mm);Deposited energy (MeV)", 200, -200., 200.);
   analysis->CreateH1("hSecondaryParticles", "Secondaries;type;count", 4, 0., 4.);
+  // Cell-local radial 1D spectra (index 10, 11): edep per radial bin, all cells of one type stacked
+  analysis->CreateH1("hCellRadialNormal",
+                     "Normal cell radial edep;r (um);Deposited energy (MeV)", 50, 0., 5.);
+  analysis->CreateH1("hCellRadialTumor",
+                     "Tumor cell radial edep;r (um);Deposited energy (MeV)", 50, 0., 5.);
   analysis->CreateH3("hVoxelDose3D", "Tumor/normal voxel edep;x (mm);y (mm);z (mm)",
-                     100, -140., 140., 100, -80., 80., 80, -20., 100.);
+                     100, -80., 80., 100, -140., 140., 80, -20., 100.);
+  // Cell-local (r_xy, z_local) 2D edep maps for stacked single-cell visualization (H2 index 0, 1)
+  analysis->CreateH2("hCellLocalNormal",
+                     "Normal cell local edep;r_xy (um);z_local (um);MeV",
+                     50, 0., 5., 50, -5., 5.);
+  analysis->CreateH2("hCellLocalTumor",
+                     "Tumor cell local edep;r_xy (um);z_local (um);MeV",
+                     50, 0., 5., 50, -5., 5.);
 }
 
 void TherapyAnalysisManager::FillRunTree(G4int nEvents, G4int nCells)
@@ -180,6 +237,7 @@ void TherapyAnalysisManager::FillRunTree(G4int nEvents, G4int nCells)
   G4int col = 0;
   analysis->FillNtupleIColumn(kRunTree, col++, config.ModeCode());
   analysis->FillNtupleIColumn(kRunTree, col++, config.BoronModeCode());
+  analysis->FillNtupleIColumn(kRunTree, col++, config.SourceModeCode());
   analysis->FillNtupleIColumn(kRunTree, col++, nEvents);
   analysis->FillNtupleIColumn(kRunTree, col++, nCells);
   analysis->FillNtupleDColumn(kRunTree, col++, tumorSize.x() / mm);
@@ -188,6 +246,7 @@ void TherapyAnalysisManager::FillRunTree(G4int nEvents, G4int nCells)
   analysis->FillNtupleDColumn(kRunTree, col++, config.GetCellDiameter() / micrometer);
   analysis->FillNtupleDColumn(kRunTree, col++, config.GetCellPitch() / micrometer);
   analysis->FillNtupleDColumn(kRunTree, col++, config.GetBoronPPM());
+  analysis->FillNtupleDColumn(kRunTree, col++, config.GetB10CaptureBias());
   analysis->FillNtupleDColumn(kRunTree, col++, config.GetKillDoseThreshold() / gray);
   analysis->AddNtupleRow(kRunTree);
 }
@@ -195,6 +254,12 @@ void TherapyAnalysisManager::FillRunTree(G4int nEvents, G4int nCells)
 void TherapyAnalysisManager::BeginEvent()
 {
   fEvent.Reset();
+  fEvent.forcedCaptureBranch = fPendingForcedCaptureBranch;
+  fEvent.forcedCaptureRadius = fPendingForcedCaptureRadius;
+  fEvent.forcedInitialHighLET = fPendingForcedInitialHighLET;
+  fPendingForcedCaptureBranch = -1;
+  fPendingForcedCaptureRadius = 0.;
+  fPendingForcedInitialHighLET = 0.;
 }
 
 void TherapyAnalysisManager::EndEvent(G4int eventID)
@@ -216,6 +281,21 @@ void TherapyAnalysisManager::EndEvent(G4int eventID)
   analysis->FillNtupleIColumn(kEventTree, col++, fEvent.nLi7);
   analysis->FillNtupleIColumn(kEventTree, col++, fEvent.nGamma);
   analysis->FillNtupleIColumn(kEventTree, col++, fEvent.nElectron);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.nAlphaWeighted);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.nLi7Weighted);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.nGammaWeighted);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.nElectronWeighted);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.edepNucleusTumorGamma / MeV);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.edepNucleusTumorProton / MeV);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.edepNucleusTumorAlpha / MeV);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.edepNucleusTumorLi7 / MeV);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.edepNucleusNormalGamma / MeV);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.edepNucleusNormalProton / MeV);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.edepNucleusNormalAlpha / MeV);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.edepNucleusNormalLi7 / MeV);
+  analysis->FillNtupleIColumn(kEventTree, col++, fEvent.forcedCaptureBranch);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.forcedCaptureRadius / micrometer);
+  analysis->FillNtupleDColumn(kEventTree, col++, fEvent.forcedInitialHighLET / MeV);
   analysis->AddNtupleRow(kEventTree);
 
   analysis->FillH1(0, DoseGy(fEvent.edepTumorRegion, fTumorRegionMass));
@@ -225,6 +305,9 @@ void TherapyAnalysisManager::EndEvent(G4int eventID)
 void TherapyAnalysisManager::AddEnergyDeposit(G4double edep,
                                               G4double stepLength,
                                               const G4ThreeVector& position,
+                                              const G4ThreeVector& cellLocalPosition,
+                                              const G4ThreeVector& cellLocalEndPosition,
+                                              G4bool hasCellLocal,
                                               G4int cellID,
                                               G4bool inTumorRegion,
                                               G4bool inNormalRegion,
@@ -235,44 +318,99 @@ void TherapyAnalysisManager::AddEnergyDeposit(G4double edep,
                                               const G4String&,
                                               const G4String&,
                                               G4int eventID,
-                                              G4int trackID)
+                                              G4int trackID,
+                                              G4double weight)
 {
   if (edep <= 0.) return;
 
   auto analysis = G4AnalysisManager::Instance();
-  fEvent.edepTotal += edep;
+  const G4double weightedEdep = edep * weight;
+  fEvent.edepTotal += weightedEdep;
 
-  if (inTumorRegion) fEvent.edepTumorRegion += edep;
-  if (inNormalRegion) fEvent.edepNormalRegion += edep;
+  if (inTumorRegion) fEvent.edepTumorRegion += weightedEdep;
+  if (inNormalRegion) fEvent.edepNormalRegion += weightedEdep;
 
   const G4double let = stepLength > 0. ? (edep / MeV) / (stepLength / micrometer) : 0.;
-  if (inTumorRegion) analysis->FillH1(6, let);
-  if (inNormalRegion) analysis->FillH1(7, let);
+  if (inTumorRegion) analysis->FillH1(6, let, weight);
+  if (inNormalRegion) analysis->FillH1(7, let, weight);
   if (inPhantom) {
-    analysis->FillH1(8, position.y() / mm, edep / MeV);
-    analysis->FillH3(0, position.x() / mm, position.y() / mm, position.z() / mm, edep / MeV);
+    analysis->FillH1(8, position.y() / mm, weightedEdep / MeV);
+    analysis->FillH3(0, position.x() / mm, position.y() / mm, position.z() / mm, weightedEdep / MeV);
   }
 
   auto found = fCells.find(cellID);
   if (found != fCells.end()) {
     auto& cell = found->second;
     const G4bool isTumorCell = cell.info.type == CellType::Tumor;
-    cell.edepCell += edep;
-    cell.hits += 1;
-    if (particleName == "alpha") cell.alphaHits += 1;
-    if (particleName.find("Li7") != G4String::npos) cell.liHits += 1;
+    const G4bool isAlpha = (particleName == "alpha");
+    const G4bool isLi7 = (particleName.find("Li7") != G4String::npos);
+    const G4bool isGamma = (particleName == "gamma" || particleName == "e-" || particleName == "e+");
+    const G4bool isProton = (particleName == "proton");
 
-    if (isTumorCell) fEvent.edepTumorCells += edep;
-    else fEvent.edepNormalCells += edep;
+    cell.edepCell += weightedEdep;
+    cell.hits += 1;
+    if (isAlpha) cell.alphaHits += 1;
+    if (isLi7) cell.liHits += 1;
+
+    if (isTumorCell) fEvent.edepTumorCells += weightedEdep;
+    else fEvent.edepNormalCells += weightedEdep;
 
     if (inNucleus) {
-      cell.edepNucleus += edep;
-      if (isTumorCell) fEvent.edepNucleusTumor += edep;
-      else fEvent.edepNucleusNormal += edep;
+      cell.edepNucleus += weightedEdep;
+      if (isAlpha) {
+        cell.edepNucleusAlpha += weightedEdep;
+        cell.alphaNucleusHits += 1;
+      } else if (isLi7) {
+        cell.edepNucleusLi7 += weightedEdep;
+        cell.liNucleusHits += 1;
+      } else if (isProton) {
+        cell.edepNucleusProton += weightedEdep;
+      } else if (isGamma) {
+        cell.edepNucleusGamma += weightedEdep;
+      }
+      if (isTumorCell) {
+        fEvent.edepNucleusTumor += weightedEdep;
+        if (isAlpha) fEvent.edepNucleusTumorAlpha += weightedEdep;
+        else if (isLi7) fEvent.edepNucleusTumorLi7 += weightedEdep;
+        else if (isProton) fEvent.edepNucleusTumorProton += weightedEdep;
+        else if (isGamma) fEvent.edepNucleusTumorGamma += weightedEdep;
+      } else {
+        fEvent.edepNucleusNormal += weightedEdep;
+        if (isAlpha) fEvent.edepNucleusNormalAlpha += weightedEdep;
+        else if (isLi7) fEvent.edepNucleusNormalLi7 += weightedEdep;
+        else if (isProton) fEvent.edepNucleusNormalProton += weightedEdep;
+        else if (isGamma) fEvent.edepNucleusNormalGamma += weightedEdep;
+      }
     }
     if (inBoronRegion) {
-      cell.edepBoronRegion += edep;
-      fEvent.edepBoronRegion += edep;
+      cell.edepBoronRegion += weightedEdep;
+      fEvent.edepBoronRegion += weightedEdep;
+    }
+
+    const G4bool fillCellLocal =
+      TherapyConfig::Instance().GetSourceMode() == SourceMode::B10Capture && (isAlpha || isLi7);
+    if (hasCellLocal && fillCellLocal) {
+      const G4double edepMeV = weightedEdep / MeV;
+      const G4ThreeVector localDelta = cellLocalEndPosition - cellLocalPosition;
+      const G4int nSamples =
+        std::max(1, static_cast<G4int>(std::ceil(localDelta.mag() / kCellLocalSamplingStep)));
+      const G4double sampleEdepMeV = edepMeV / nSamples;
+      for (G4int sample = 0; sample < nSamples; ++sample) {
+        const G4double fraction = (sample + 0.5) / nSamples;
+        const G4ThreeVector localSample = cellLocalPosition + fraction * localDelta;
+        const G4double r_um = localSample.mag() / micrometer;
+        const G4double rxy_planar_um =
+          std::sqrt(localSample.x() * localSample.x() +
+                    localSample.y() * localSample.y()) / micrometer;
+        const G4double z_um = localSample.z() / micrometer;
+        if (isTumorCell) {
+          analysis->FillH1(11, r_um, sampleEdepMeV);
+          analysis->FillH2(1, rxy_planar_um, z_um, sampleEdepMeV);
+        } else {
+          analysis->FillH1(10, r_um, sampleEdepMeV);
+          analysis->FillH2(0, rxy_planar_um, z_um, sampleEdepMeV);
+        }
+      }
     }
   }
 
@@ -284,29 +422,43 @@ void TherapyAnalysisManager::AddEnergyDeposit(G4double edep,
     analysis->FillNtupleDColumn(kStepTree, col++, position.x() / mm);
     analysis->FillNtupleDColumn(kStepTree, col++, position.y() / mm);
     analysis->FillNtupleDColumn(kStepTree, col++, position.z() / mm);
-    analysis->FillNtupleDColumn(kStepTree, col++, edep / MeV);
+    analysis->FillNtupleDColumn(kStepTree, col++, weightedEdep / MeV);
     analysis->FillNtupleDColumn(kStepTree, col++, stepLength / micrometer);
     analysis->FillNtupleDColumn(kStepTree, col++, let);
+    analysis->FillNtupleDColumn(kStepTree, col++, weight);
     analysis->AddNtupleRow(kStepTree);
   }
 }
 
-void TherapyAnalysisManager::AddSecondary(const G4String& particleName)
+void TherapyAnalysisManager::AddSecondary(const G4String& particleName, G4double weight)
 {
   auto analysis = G4AnalysisManager::Instance();
   if (particleName == "alpha") {
     ++fEvent.nAlpha;
-    analysis->FillH1(9, 0.5);
+    fEvent.nAlphaWeighted += weight;
+    analysis->FillH1(9, 0.5, weight);
   } else if (particleName.find("Li7") != G4String::npos) {
     ++fEvent.nLi7;
-    analysis->FillH1(9, 1.5);
+    fEvent.nLi7Weighted += weight;
+    analysis->FillH1(9, 1.5, weight);
   } else if (particleName == "gamma") {
     ++fEvent.nGamma;
-    analysis->FillH1(9, 2.5);
+    fEvent.nGammaWeighted += weight;
+    analysis->FillH1(9, 2.5, weight);
   } else if (particleName == "e-") {
     ++fEvent.nElectron;
-    analysis->FillH1(9, 3.5);
+    fEvent.nElectronWeighted += weight;
+    analysis->FillH1(9, 3.5, weight);
   }
+}
+
+void TherapyAnalysisManager::RecordForcedCapture(G4int branch,
+                                                 G4double radius,
+                                                 G4double initialHighLET)
+{
+  fPendingForcedCaptureBranch = branch;
+  fPendingForcedCaptureRadius = radius;
+  fPendingForcedInitialHighLET = initialHighLET;
 }
 
 void TherapyAnalysisManager::FillCellTree()
@@ -336,6 +488,12 @@ void TherapyAnalysisManager::FillCellTree()
     analysis->FillNtupleIColumn(kCellTree, col++, cell.alphaHits);
     analysis->FillNtupleIColumn(kCellTree, col++, cell.liHits);
     analysis->FillNtupleIColumn(kCellTree, col++, killed);
+    analysis->FillNtupleDColumn(kCellTree, col++, cell.edepNucleusGamma / MeV);
+    analysis->FillNtupleDColumn(kCellTree, col++, cell.edepNucleusProton / MeV);
+    analysis->FillNtupleDColumn(kCellTree, col++, cell.edepNucleusAlpha / MeV);
+    analysis->FillNtupleDColumn(kCellTree, col++, cell.edepNucleusLi7 / MeV);
+    analysis->FillNtupleIColumn(kCellTree, col++, cell.alphaNucleusHits);
+    analysis->FillNtupleIColumn(kCellTree, col++, cell.liNucleusHits);
     analysis->AddNtupleRow(kCellTree);
 
     if (cell.info.type == CellType::Tumor) {

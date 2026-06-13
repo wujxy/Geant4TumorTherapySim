@@ -1,0 +1,26 @@
+/control/verbose 0
+/run/verbose 0
+/event/verbose 0
+/tracking/verbose 0
+
+/therapy/mode problem2
+/therapy/boronMode shell
+/therapy/outputFile output_q2C_shell_100000ppm.root
+/therapy/saveStepTree false
+/therapy/tumorPosition 0 -80 0 mm
+/therapy/normalPosition 0 80 0 mm
+/therapy/sourcePosition 0 -600 0 mm
+/therapy/sourceDirection 0 1 0
+/therapy/beamRadius 150 um
+/therapy/cellPatchSize 200 200 200 um
+/therapy/cellPitch 12 um
+/therapy/cellDiameter 10 um
+/therapy/nucleusRadius 2.5 um
+/therapy/boronPPM 204918.00
+/therapy/killDoseThreshold 2 Gy
+
+/random/setSeeds 11111111 98765431
+/run/initialize
+/gun/particle neutron
+/gun/energy 0.5 eV
+/run/beamOn 500000

@@ -23,6 +23,7 @@ def test_q2_mixed_patch_keeps_xz_column_cell_type_fixed_along_y():
     text = (PROJECT_DIR / "src" / "CellModel.cc").read_text()
 
     assert "((ix + iz) % 2) == 0" in text
+    assert "((iy + iz) % 2) == 0" not in text
     assert "((ix + iy + iz) % 2) == 0" not in text
 
 
@@ -44,7 +45,7 @@ def test_q2_heatmap_uses_y_projected_columns_not_central_slice():
 
     assert "projected_columns" in heatmap_block
     assert "central_y_slice" not in heatmap_block
-    assert "Projected cell dose" in heatmap_block
+    assert "y-projected cell dose" in heatmap_block
 
 
 def test_q2_heatmap_uses_high_statistics_results_and_linear_color_scale():
@@ -78,6 +79,20 @@ def test_q2_b10_scan_defaults_to_high_statistics_runs():
     assert 'B10_SCAN_EVENTS="${B10_SCAN_EVENTS:-200000}"' in workflow_runner
 
 
+def test_q2_workflow_runs_all_experiments_with_new_coordinates():
+    workflow = (PROJECT_DIR / "scripts" / "run_q2_workflow.sh").read_text()
+
+    assert "problem1" not in workflow
+    assert 'B10_SCAN_EVENTS="${B10_SCAN_EVENTS:-200000}"' in workflow
+    assert 'THERAPY_COMPARISON_EVENTS="${THERAPY_COMPARISON_EVENTS:-20000}"' in workflow
+    assert "1000 3000 10000 30000 100000 300000 500000" in workflow
+    assert "2000 5000 10000 20000 50000 100000 200000" in workflow
+    assert "/therapy/tumorPosition 0 -80 0 mm" in workflow
+    assert "/therapy/sourcePosition 0 -600 0 mm" in workflow
+    assert "/therapy/sourceDirection 0 1 0" in workflow
+    assert "plot_assignment_results.py --section q2" in workflow
+
+
 def test_q2_neutron_fluence_scan_points_and_paths():
     import sys
 
@@ -88,6 +103,25 @@ def test_q2_neutron_fluence_scan_points_and_paths():
     assert plot.NEUTRON_FLUENCE_MAP_EVENTS == [5000, 20000, 100000, 200000]
     assert plot.neutron_fluence_root_path("uniform", 2000).name == "output_problem2_bnct_uniform_fluence_2000events.root"
     assert plot.neutron_fluence_root_path("shell", 200000).name == "output_problem2_bnct_shell_fluence_200000events.root"
+
+
+def test_q2_scans_use_li7_as_b10_capture_proxy():
+    text = (PROJECT_DIR / "scripts" / "plot_assignment_results.py").read_text()
+    summary_block = text.split("def q2_scan_summary(path):", 1)[1].split(
+        "def q2_therapy_comparison_summary", 1
+    )[0]
+    concentration_block = text.split("def plot_q2_b10_concentration_scan():", 1)[1].split(
+        "def plot_q2_neutron_fluence_scan", 1
+    )[0]
+    fluence_block = text.split("def plot_q2_neutron_fluence_scan():", 1)[1].split(
+        "def plot_q2_neutron_fluence_projected_maps", 1
+    )[0]
+
+    assert 'reaction_yield = sum(row["n_li7"] for row in event_rows)' in summary_block
+    assert 'row["n_alpha"] + row["n_li7"]' not in summary_block
+    for block in (concentration_block, fluence_block):
+        assert 'set_ylabel("Li7 count")' in block
+        assert 'set_title("B10-capture proxy")' in block
 
 
 def test_q2_neutron_fluence_plots_are_registered():
@@ -132,7 +166,7 @@ def test_q2_gamma_and_proton_macros_use_shared_cell_patch():
     expected_common = [
         "/therapy/mode problem2",
         "/therapy/boronMode none",
-        "/therapy/sourcePosition -45 -600 30 mm",
+        "/therapy/sourcePosition 0 -600 0 mm",
         "/therapy/sourceDirection 0 1 0",
         "/therapy/beamRadius 150 um",
         "/therapy/cellPatchSize 200 200 200 um",
@@ -143,7 +177,7 @@ def test_q2_gamma_and_proton_macros_use_shared_cell_patch():
     ]
     macro_expectations = {
         "problem2_gamma.mac": ["/therapy/outputFile output_problem2_gamma.root", "/gun/particle gamma", "/gun/energy 1 MeV"],
-        "problem2_proton.mac": ["/therapy/outputFile output_problem2_proton.root", "/gun/particle proton", "/gun/energy 45 MeV"],
+        "problem2_proton.mac": ["/therapy/outputFile output_problem2_proton.root", "/gun/particle proton", "/gun/energy 80 MeV"],
     }
 
     for macro_name, specific_lines in macro_expectations.items():
@@ -156,7 +190,7 @@ def test_q2_therapy_comparison_runner_generates_control_macros():
     script = (PROJECT_DIR / "scripts" / "run_q2_therapy_comparison.sh").read_text()
 
     assert 'declare -A particles=(["gamma"]="gamma" ["proton"]="proton")' in script
-    assert 'declare -A energies=(["gamma"]="1 MeV" ["proton"]="45 MeV")' in script
+    assert 'declare -A energies=(["gamma"]="1 MeV" ["proton"]="80 MeV")' in script
     assert "/therapy/mode problem2" in script
     assert "/therapy/boronMode none" in script
     assert "/therapy/beamRadius 150 um" in script
@@ -234,23 +268,17 @@ def test_q2_therapy_comparison_summary_metrics_are_defined():
 def test_report_includes_q2_therapy_comparison_section():
     report = (PROJECT_DIR / "G4sim_reporter.md").read_text()
 
-    assert "### 4.7 BNCT 与常规射线在同一细胞 patch 下的对比" in report
-    assert "不是替代 Q1" in report
-    assert "Q2_therapy_comparison_summary.png" not in report
-    assert "Q2_therapy_comparison_projected_maps.png" in report
-    assert "Q2_therapy_comparison_dose_bars.png" not in report
-    assert "Q2_therapy_comparison_selectivity.png" not in report
-    assert "Q2_therapy_comparison_cell_spectra.png" not in report
-    assert "Q2_therapy_comparison_secondary_yield.png" not in report
-    assert "正常细胞核的保护更强" in report
-    assert "肿瘤细胞核输送剂量的能力弱于 uniform" in report
+    assert "### 4.8 F4 — 跨疗法等剂量对照" in report
+    assert "figures_final/F4_therapy_comparison_projected_maps.png" in report
+    assert "occurrence bias" in report
+    assert "Geant4 传播" in report
+    assert "raw captures" in report
 
 
 def test_report_documents_high_statistics_q2_figures():
     report = (PROJECT_DIR / "G4sim_reporter.md").read_text()
-    hotspot_section = report.split("### 4.4 固定浓度下的热点图与剂量比较", 1)[1].split("### 4.5 B10 浓度扫描", 1)[0]
-    concentration_section = report.split("### 4.5 B10 浓度扫描", 1)[1].split("### 4.6 相对中子注量扫描", 1)[0]
-
-    assert "`200000` histories" in hotspot_section
-    assert "共享线性色标" in hotspot_section
-    assert "每个浓度点使用 `200000` histories" in concentration_section
+    assert "3 seeds × 100000" in report
+    assert "Q2_forced_capture_main.png" in report
+    assert "Q2_forced_capture_microdose.png" in report
+    assert "Q2_two_stage_b10_scan.png" in report
+    assert "Poisson 联合拟合" in report

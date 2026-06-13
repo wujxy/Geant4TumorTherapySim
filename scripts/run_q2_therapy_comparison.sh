@@ -25,7 +25,7 @@ cmake -S . -B build
 cmake --build build -j2
 
 declare -A particles=(["gamma"]="gamma" ["proton"]="proton")
-declare -A energies=(["gamma"]="1 MeV" ["proton"]="45 MeV")
+declare -A energies=(["gamma"]="1 MeV" ["proton"]="80 MeV")
 THERAPY_COMPARISON_EVENTS="${THERAPY_COMPARISON_EVENTS:-20000}"
 
 for case_name in gamma proton; do
@@ -41,9 +41,9 @@ for case_name in gamma proton; do
 /therapy/boronMode none
 /therapy/outputFile ${output}
 /therapy/saveStepTree false
-/therapy/tumorPosition -45 -45 30 mm
-/therapy/normalPosition -45 -15 30 mm
-/therapy/sourcePosition -45 -600 30 mm
+/therapy/tumorPosition 0 -80 0 mm
+/therapy/normalPosition 0 80 0 mm
+/therapy/sourcePosition 0 -600 0 mm
 /therapy/sourceDirection 0 1 0
 /therapy/beamRadius 150 um
 /therapy/cellPatchSize 200 200 200 um

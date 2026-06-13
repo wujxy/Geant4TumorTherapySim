@@ -3,7 +3,9 @@
 #include "TherapyConfig.hh"
 
 #include "G4PhysListFactory.hh"
+#include "G4GenericBiasingPhysics.hh"
 #include "G4RunManagerFactory.hh"
+#include "G4StepLimiterPhysics.hh"
 #include "G4UIExecutive.hh"
 #include "G4UImanager.hh"
 #include "G4VisExecutive.hh"
@@ -21,6 +23,10 @@ int main(int argc, char** argv)
 
   G4PhysListFactory factory;
   auto* physicsList = factory.GetReferencePhysList("QGSP_BIC_HP");
+  physicsList->RegisterPhysics(new G4StepLimiterPhysics);
+  auto* biasingPhysics = new G4GenericBiasingPhysics;
+  biasingPhysics->PhysicsBias("neutron", {"neutronInelastic"});
+  physicsList->RegisterPhysics(biasingPhysics);
   runManager->SetUserInitialization(physicsList);
   runManager->SetUserInitialization(new ActionInitialization(detector));
 
