@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Q2 重设计 — 实验 C：B10 总量扫描（H3）
-# uniform 等效 ppm 扫描 {30k, 100k, 300k, 500k}；每点 uniform 与 shell 各 1 seed × 500k events
+# Q2 experiment C: equal-total-B10 concentration scan with occurrence bias.
+# Statistical weights reconstruct the corresponding unbiased beam result.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +9,8 @@ cd "$PROJECT_DIR"
 GEANT4_ENV="${GEANT4_ENV:-/home/yoru/packages/geant4-11.4.0/bin/geant4.sh}"
 ROOT_DIR="${ROOT_DIR:-/home/yoru/packages/root}"
 JOBS="${JOBS:-12}"
-EVENTS_SCAN="${EVENTS_SCAN:-500000}"
+EVENTS_SCAN="${EVENTS_SCAN:-200000}"
+B10_CAPTURE_BIAS="${B10_CAPTURE_BIAS:-1000}"
 PPM_LIST=(30000 100000 200000 300000)
 SEED1=11111111
 SEED2=98765431
@@ -29,7 +30,7 @@ SHELL_FACTOR=$(echo "scale=6; 1/(1 - (4/5)^3)" | bc -l)
 echo "[experiment C] shell-actual = uniform_equiv x ${SHELL_FACTOR}"
 
 write_macro() {
-  local macro="$1" output="$2" mode="$3" ppm="$4" events="$5" seed1="$6" seed2="$7"
+  local macro="$1" output="$2" mode="$3" ppm="$4" events="$5" seed1="$6" seed2="$7" bias="$8"
   cat > "$macro" <<EOF
 /control/verbose 0
 /run/verbose 0
@@ -37,6 +38,8 @@ write_macro() {
 /tracking/verbose 0
 
 /therapy/mode problem2
+/therapy/sourceMode beam
+/therapy/b10CaptureBias ${bias}
 /therapy/boronMode ${mode}
 /therapy/outputFile ${output}
 /therapy/saveStepTree false
@@ -63,16 +66,14 @@ EOF
 tasks=()
 for uppm in "${PPM_LIST[@]}"; do
   sppm=$(echo "scale=2; $uppm * $SHELL_FACTOR / 1" | bc -l)
-
-  m="results/generated_macros/q2C_uniform_${uppm}ppm.mac"
-  o="output_q2C_uniform_${uppm}ppm.root"
-  write_macro "$m" "$o" uniform "$uppm" "$EVENTS_SCAN" "$SEED1" "$SEED2"
-  tasks+=("$m")
-
-  m="results/generated_macros/q2C_shell_${uppm}ppm.mac"
-  o="output_q2C_shell_${uppm}ppm.root"
-  write_macro "$m" "$o" shell "$sppm" "$EVENTS_SCAN" "$SEED1" "$SEED2"
-  tasks+=("$m")
+  for mode in uniform shell; do
+    ppm="$uppm"
+    if [[ "$mode" == shell ]]; then ppm="$sppm"; fi
+    m="results/generated_macros/q2C_biased_${mode}_${uppm}ppm.mac"
+    o="output_q2C_biased_${mode}_${uppm}ppm.root"
+    write_macro "$m" "$o" "$mode" "$ppm" "$EVENTS_SCAN" "$SEED1" "$SEED2" "$B10_CAPTURE_BIAS"
+    tasks+=("$m")
+  done
 done
 
 echo "[experiment C] running ${#tasks[@]} jobs with ${JOBS}-way parallelism..."
@@ -83,4 +84,4 @@ printf '%s\0' "${tasks[@]}" | xargs -0 -n1 -P "$JOBS" bash -c '
   ./build/tumor_therapy "$macro" > "results/logs/${name}.log" 2>&1
 ' _
 
-echo "[experiment C] done. ROOT outputs: output_q2C_*.root"
+echo "[experiment C] done. ROOT outputs: output_q2C_biased_*.root"

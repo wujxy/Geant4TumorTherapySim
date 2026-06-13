@@ -92,6 +92,9 @@ void SteppingAction::UserSteppingAction(const G4Step* step)
 
   auto track = step->GetTrack();
   const auto particleName = track->GetParticleDefinition()->GetParticleName();
+  if (inTumorRegion && track->GetParentID() == 0 && particleName == "neutron") {
+    TherapyAnalysisManager::Instance().MarkPrimaryNeutronReachedTumor();
+  }
   G4String processName = "init";
   if (prePoint->GetProcessDefinedStep()) {
     processName = prePoint->GetProcessDefinedStep()->GetProcessName();

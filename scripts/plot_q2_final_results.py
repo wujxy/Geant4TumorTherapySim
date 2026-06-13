@@ -526,8 +526,8 @@ def plot_f4():
         selectivity_ax.text(index, value + 0.025, f"{value:.3f}", ha="center", va="bottom")
 
     fig.suptitle(
-        "F4 Real-beam therapy comparison at equal mean tumor-cell dose (1 Gy)\n"
-        "BNCT capture-bias results are reconstructed with Geant4 statistical weights"
+        "F4 Exploratory real-beam comparison at equal mean tumor-cell dose (1 Gy)\n"
+        "BNCT occurrence-bias estimator is not analog-validated"
     )
     fig.savefig(FIG_DIR / "F4_therapy_comparison_projected_maps.png", dpi=180)
     plt.close(fig)

@@ -52,6 +52,7 @@ void EventAccumulator::Reset()
   forcedCaptureBranch = -1;
   forcedCaptureRadius = 0.;
   forcedInitialHighLET = 0.;
+  primaryNeutronReachedTumor = 0;
 }
 
 TherapyAnalysisManager& TherapyAnalysisManager::Instance()
@@ -162,6 +163,7 @@ void TherapyAnalysisManager::CreateObjects(G4bool saveStepTree)
   analysis->CreateNtupleIColumn("forcedCaptureBranch");
   analysis->CreateNtupleDColumn("forcedCaptureRadius_um");
   analysis->CreateNtupleDColumn("forcedInitialHighLET_MeV");
+  analysis->CreateNtupleIColumn("primaryNeutronReachedTumor");
   analysis->FinishNtuple();
 
   analysis->CreateNtuple("CellTree", "Accumulated cell scoring");
@@ -296,6 +298,7 @@ void TherapyAnalysisManager::EndEvent(G4int eventID)
   analysis->FillNtupleIColumn(kEventTree, col++, fEvent.forcedCaptureBranch);
   analysis->FillNtupleDColumn(kEventTree, col++, fEvent.forcedCaptureRadius / micrometer);
   analysis->FillNtupleDColumn(kEventTree, col++, fEvent.forcedInitialHighLET / MeV);
+  analysis->FillNtupleIColumn(kEventTree, col++, fEvent.primaryNeutronReachedTumor);
   analysis->AddNtupleRow(kEventTree);
 
   analysis->FillH1(0, DoseGy(fEvent.edepTumorRegion, fTumorRegionMass));
@@ -450,6 +453,11 @@ void TherapyAnalysisManager::AddSecondary(const G4String& particleName, G4double
     fEvent.nElectronWeighted += weight;
     analysis->FillH1(9, 3.5, weight);
   }
+}
+
+void TherapyAnalysisManager::MarkPrimaryNeutronReachedTumor()
+{
+  fEvent.primaryNeutronReachedTumor = 1;
 }
 
 void TherapyAnalysisManager::RecordForcedCapture(G4int branch,

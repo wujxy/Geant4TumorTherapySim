@@ -52,6 +52,7 @@ struct EventAccumulator {
   G4int forcedCaptureBranch = -1;
   G4double forcedCaptureRadius = 0.;
   G4double forcedInitialHighLET = 0.;
+  G4int primaryNeutronReachedTumor = 0;
 };
 
 struct CellAccumulator {
@@ -100,6 +101,7 @@ public:
 
   void AddSecondary(const G4String& particleName, G4double weight);
   void RecordForcedCapture(G4int branch, G4double radius, G4double initialHighLET);
+  void MarkPrimaryNeutronReachedTumor();
 
   G4double TumorRegionMass() const { return fTumorRegionMass; }
   G4double NormalRegionMass() const { return fNormalRegionMass; }
